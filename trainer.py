@@ -66,17 +66,10 @@ class Trainer:
         #     self.models["encoder"].num_ch_enc, self.opt.scales)
         self.models["mamba_depth"] = networks.DepthDecoder_MSF(
             self.models["encoder"].num_ch_enc, self.opt.scales, use_channel_mamba=self.opt.use_channel_mamba,
-            use_channel_mamba_2=self.opt.use_channel_mamba_2,use_AdaRM=self.opt.use_AdaRM,
-            use_channel_mamba_5=self.opt.use_channel_mamba_5, use_out_feature=self.opt.use_out_feature,
-            dataset=self.opt.dataset)
+            use_channel_mamba_2=self.opt.use_channel_mamba_2,use_HAM=self.opt.use_HAM, dataset=self.opt.dataset)
         self.models["mamba_depth"].to(self.device)
         self.parameters_to_train += list(self.models["mamba_depth"].parameters())
-        # if self.opt.use_channel_mamba:
-        #     self.models["mamba_depth"] = networks.Mamba_DepthDecoder(
-        #         self.models["encoder"].num_ch_enc, self.opt.scales, use_channel_mamba=self.opt.use_channel_mamba,
-        #         use_channel_mamba_2=self.opt.use_channel_mamba_2)
-        #     self.models["mamba_depth"].to(self.device)
-        #     self.parameters_to_train += list(self.models["mamba_depth"].parameters())
+
         if self.use_pose_net:
             if self.opt.pose_model_type == "separate_resnet":
                 self.models["pose_encoder"] = networks.ResnetEncoder(
@@ -118,17 +111,17 @@ class Trainer:
         if self.opt.dataset == "ddad":
             self.params = [{
                 "params": list(self.models["pose_encoder"].parameters())+list(self.models["pose"].parameters()),
-                "lr": 2e-4
+                "lr": 1e-4
                 # "weight_decay": 0.01
             },
                 {
                     "params": list(self.models["encoder"].parameters()),
-                    "lr": 2e-4
+                    "lr": 1e-5
                     # "weight_decay": 0.01
                 },
                 {
                     "params": list(self.models["mamba_depth"].parameters()),
-                    "lr": 2e-4
+                    "lr": 6e-5
                     # "weight_decay": 0.01
                 }
             ]
@@ -240,12 +233,6 @@ class Trainer:
         self.start_Res_smooth_guide = False
         self.start_time = time.time()
         for self.epoch in range(self.opt.num_epochs):
-            if self.epoch >= self.opt.guide_num_epochs and self.opt.is_use_guide_map:
-                self.start_guide = True
-            if self.epoch >= self.opt.smooth_guide_num_epochs and self.opt.is_use_guide_map:
-                self.start_smooth_guide = True
-            if self.epoch >= self.opt.Res_smooth_guide_num_epochs and self.opt.is_use_guide_map:
-                self.start_Res_smooth_guide = True
             self.run_epoch()
             if (self.epoch + 1) % self.opt.save_frequency == 0:
                 self.save_model()
@@ -275,21 +262,12 @@ class Trainer:
             late_phase = self.step % 2000 == 0
 
             if early_phase or late_phase:
-                if not self.opt.use_out_feature:
-                    # self.log_time(batch_idx, duration, losses["loss_HiS"].cpu().data, losses["loss_MiS"].cpu().data, losses["loss_LoS"].cpu().data, losses["loss_consis_HiS"].cpu().data, losses["loss_consis_LoS"].cpu().data, losses["loss"].cpu().data)
-                    self.log_time(batch_idx, duration, losses["loss_HiS"].cpu().data, losses["loss_MiS"].cpu().data,
-                                  losses["loss_LoS"].cpu().data, losses["loss_consis_HiS"].cpu().data,
-                                  losses["loss_consis_LoS"].cpu().data, losses["loss_sd"].cpu().data,
-                                  losses["loss"].cpu().data)
-                else:
-                    self.log_time(batch_idx, duration, losses["loss_HiS"].cpu().data, losses["loss_MiS"].cpu().data,
-                                  losses["loss_LoS"].cpu().data, losses["loss_consis_HiS"].cpu().data,
-                                  losses["loss_consis_LoS"].cpu().data, losses["loss"].cpu().data, losses["loss_sd"].cpu().data)
+                self.log_time(batch_idx, duration, losses["loss_HiS"].cpu().data, losses["loss_MiS"].cpu().data, losses["loss_LoS"].cpu().data, losses["loss_consis_HiS"].cpu().data, losses["loss_consis_LoS"].cpu().data, losses["loss"].cpu().data)
                 if "depth_gt" in inputs:
                     self.compute_depth_losses(inputs, outputs, losses)
 
-                # self.log("train", inputs, outputs, losses)
-                # self.val()
+                self.log("train", inputs, outputs, losses)
+                self.val()
 
             self.step += 1
             
@@ -322,17 +300,15 @@ class Trainer:
                 outputs["out_HiS"] = self.models["mamba_depth"](features_HiS, False, False, False)
             else:
                 outputs["out_HiS"] = self.models["mamba_depth"](features_HiS, False,
-                                                                False, False, self.opt.use_channel_mamba_5)
+                                                                False, False)
             # Otherwise, we only feed the image with frame_id 0 through the depth encoder
             features_MiS = self.models["encoder"](inputs["color_MiS_aug", 0, 0])
             if self.opt.use_channel_mamba:
                 outputs["out_MiS"] = self.models["mamba_depth"](features_MiS, self.opt.use_channel_mamba,
-                                                                self.opt.use_channel_mamba_2, self.opt.use_AdaRM,
-                                                                self.opt.use_channel_mamba_5)
+                                                                self.opt.use_channel_mamba_2, self.opt.use_HAM)
             else:
                 outputs["out_MiS"] = self.models["mamba_depth"](features_MiS, self.opt.use_channel_mamba,
-                                                                self.opt.use_channel_mamba_2, self.opt.use_AdaRM,
-                                                                self.opt.use_channel_mamba_5)
+                                                                self.opt.use_channel_mamba_2, self.opt.use_HAM)
             # Otherwise, we only feed the image with frame_id 0 through the depth encoder
             features_LoS = self.models["encoder"](inputs["color_LoS", 0, 0])
             if self.opt.use_channel_mamba:
@@ -340,7 +316,7 @@ class Trainer:
                                                                 False, False)
             else:
                 outputs["out_LoS"] = self.models["mamba_depth"](features_LoS, False,
-                                                                False, False, self.opt.use_channel_mamba_5)
+                                                                False, False)
 
         if self.opt.predictive_mask:
             outputs["predictive_mask"] = self.models["predictive_mask"](features_MiS)
@@ -529,21 +505,6 @@ class Trainer:
 
         return reprojection_loss
 
-    def compute_reprojection_loss_disp(self, pred, target):
-        """Computes reprojection loss between a batch of predicted and target images
-        """
-        # l1_loss = torch.log(1.0 + torch.abs(target - pred))
-        abs_diff = torch.abs(target - pred)
-        l1_loss = abs_diff.mean(1, True)
-
-        if self.opt.no_ssim:
-            reprojection_loss = l1_loss
-        else:
-            ssim_loss = self.ssim(pred, target).mean(1, True)
-            reprojection_loss = 0.5 * ssim_loss + 0.5 * l1_loss
-
-        return reprojection_loss
-
     def compute_sd_loss(self, pred, target):
         """Computes reprojection loss between a batch of predicted and target images
                 """
@@ -687,105 +648,15 @@ class Trainer:
 
             mean_disp_MiS = disp_MiS.mean(2, True).mean(3, True)
             norm_disp_MiS = disp_MiS / (mean_disp_MiS + 1e-7)
-            if self.opt.is_use_guide_map and self.start_guide and (
-                    self.start_Res_smooth_guide or self.start_smooth_guide):
-                if scale == 0:
-                    # 生成 recons_loss_guide map
-                    middle_disp = disp_MiS.detach()
-                    middle_disp = F.interpolate(
-                        middle_disp, [self.opt.height, self.opt.width], mode="bilinear", align_corners=False)
-                    Res_guide_mask1 = create_recons_loss_guide_mask(self.opt.batch_size, inputs[("indice", 0, 0)],
-                                                                    inputs[("edge_region", 0, 0)], middle_disp)
-                    Res_Res_guide_mask1 = create_recons_loss_guide_mask_2(self.opt.batch_size, inputs[("indice", 0, 0)],
-                                                                    inputs[("edge_region", 0, 0)], middle_disp)
-            if self.start_guide and scale == 0 and self.start_Res_smooth_guide and self.opt.is_use_guide_map:
-                # enhan_factor = self.opt.lr[0] / self.model_optimizer.state_dict()['param_groups'][0]['lr']
-                SSIM_num = self.Conv(mask4consis)
-                # SSIM_num的尺寸为torch.Size([12, 1, 192, 640])
-                # if self.epoch < 5:
-                #     enhan_factor = self.epoch / 5.0 * 0.2
-                # elif self.epoch < 15:  # 15、16、17、18、19
-                #     enhan_factor = 0.2
-                # else:
-                #     enhan_factor = 0.35
-                enhan_factor = 0.50
-                if self.start_smooth_guide:
-                    inputs[("edge_mask", 0, 0)] = inputs[("edge_map", 0, 0)] + inputs[("edge_region", 0, 0)]
-                    smooth_loss_MiS, smooth_loss_guide_mask_2 = get_smooth_loss(norm_disp_MiS, color_MiS,
-                                                                                inputs[("edge_mask", 0, 0)],
-                                                                                self.start_smooth_guide,
-                                                                                enhan_factor, Res_guide_mask1, SSIM_num)
-                else:
-                    Res_Res_guide_mask1 = None
-                    smooth_loss_MiS, Res_guide_mask1_mask = get_smooth_loss(norm_disp_MiS, color_MiS,
-                                                                            enhan_factor=enhan_factor,
-                                                                            Res_guide_mask1=Res_guide_mask1,
-                                                                            SSIM_num=SSIM_num,
-                                                                            Res_Res_guide_mask1=Res_Res_guide_mask1)
-            elif self.start_smooth_guide and (scale == 0 or scale == 1) and self.opt.is_use_guide_map:
-                SSIM_num = self.Conv(mask4consis)
-                enhan_factor = 0.17
-                inputs[("edge_mask", 0, 0)] = inputs[("edge_map", 0, 0)] + inputs[("edge_region", 0, 0)]
-                smooth_loss_MiS, smooth_loss_guide_mask_2 = get_smooth_loss(norm_disp_MiS, color_MiS,
-                                                                            inputs[("edge_mask", 0, 0)],
-                                                                            self.start_smooth_guide,
-                                                                            enhan_factor=enhan_factor,
-                                                                            SSIM_num=SSIM_num)
-            else:
-                smooth_loss_MiS = get_smooth_loss(norm_disp_MiS, color_MiS)
+            smooth_loss_MiS = get_smooth_loss(norm_disp_MiS, color_MiS)
             loss_MiS += self.opt.disparity_smoothness * smooth_loss_MiS
-            if self.start_smooth_guide and self.opt.is_use_guide_map and (scale == 0 or scale == 1):
-                if scale != 0:
-                    smooth_loss_guide_mask_2 = F.interpolate(smooth_loss_guide_mask_2, [self.opt.height, self.opt.width],
-                                                         mode="bilinear", align_corners=False)
-                if scale == 0:
-                    new_mask = inputs[("edge_map", 0, 0)] + Res_guide_mask1
-                new_mask_middle = smooth_loss_guide_mask_2 * (1 - new_mask)
-                new_mask_middle_mean = new_mask_middle.sum() / (1 - new_mask).sum()
-                smooth_loss_guide_mask_2 = new_mask_middle + new_mask * new_mask_middle_mean
-                to_optimise_MiS = to_optimise_MiS * smooth_loss_guide_mask_2
-                loss_MiS += (to_optimise_MiS.sum() / smooth_loss_guide_mask_2.sum())
-            else:
-                loss_MiS += to_optimise_MiS.mean()
+            loss_MiS += to_optimise_MiS.mean()
 
             loss_LoS += to_optimise_LoS.mean()
             mean_disp_LoS = disp_LoS.mean(2, True).mean(3, True)
             norm_disp_LoS = disp_LoS / (mean_disp_LoS + 1e-7)
             smooth_loss_LoS = get_smooth_loss(norm_disp_LoS, color_LoS)
             loss_LoS += self.opt.disparity_smoothness * smooth_loss_LoS
-
-            ####### sd-loss ########
-            d1_1_feature_disp = outputs["out_MiS"]["d1_1_feature_disp"]
-            d1_3_feature_disp = outputs["out_MiS"]["d1_3_feature_disp"]
-            d2_1_feature_disp = outputs["out_MiS"]["d2_1_feature_disp"]
-            d2_2_feature_disp = outputs["out_MiS"]["d2_2_feature_disp"]
-            d3_1_feature_disp = outputs["out_MiS"]["d3_1_feature_disp"]
-            d4_0_feature_disp = outputs["out_MiS"]["d4_0_feature_disp"]
-            # disp1 -> disp2
-            if self.opt.dataset == "ddad":
-                d3_1_feature_disp_up = F.interpolate(
-                    d3_1_feature_disp, [192, 320], mode="nearest")
-            else:
-                d3_1_feature_disp_up = F.interpolate(
-                    d3_1_feature_disp, [96, 320], mode="nearest")
-            sd_diff_12 = cosine_similarity_per_pixel(d3_1_feature_disp_up, d4_0_feature_disp[:,:18].clone().detach())
-            loss_sd += 1 - sd_diff_12.mean()
-            # # disp2 -> disp3
-            # d2_2_feature_disp_up = F.interpolate(
-            #     d2_2_feature_disp, [48, 160], mode="nearest")
-            # sd_diff_23 = cosine_similarity_per_pixel(d2_2_feature_disp_up, d3_1_feature_disp.clone().detach())
-            # loss_sd += 1 - sd_diff_23.mean()
-            # # disp3 -> disp4
-            # d1_3_feature_disp_up = F.interpolate(
-            #     d1_3_feature_disp, [24, 80], mode="nearest")
-            # sd_diff_34 = cosine_similarity_per_pixel(d1_3_feature_disp_up, d2_2_feature_disp.clone().detach())
-            # loss_sd += 1 - sd_diff_34.mean()
-            ###
-            sd_diff_d1_1_d2_1 = cosine_similarity_per_pixel(d1_1_feature_disp, d2_1_feature_disp.clone().detach())
-            loss_sd += 1 - sd_diff_d1_1_d2_1.mean()
-            sd_diff_d2_1_d3_1 = cosine_similarity_per_pixel(d2_1_feature_disp, d3_1_feature_disp.clone().detach())
-            loss_sd += 1 - sd_diff_d2_1_d3_1.mean()
-            loss_sd = loss_sd / 3.0
 
             disp_diff_batch = 0
             for i in range(self.opt.batch_size):
@@ -813,7 +684,6 @@ class Trainer:
                 disp_diff_batch_LoS += (disp_diff_LoS_mask.sum() / (mask_disp_LoS.sum() + 1e-7))
             loss_consis_LoS += disp_diff_batch_LoS / self.opt.batch_size
 
-
             losses["loss/{}".format(scale)] = loss_HiS
 
         loss_HiS /= self.num_scales
@@ -821,14 +691,8 @@ class Trainer:
         loss_LoS /= self.num_scales
         loss_consis_HiS /= self.num_scales
         loss_consis_LoS /= self.num_scales
-        loss_sd /= self.num_scales
-        # if self.epoch < 15:
-        #     lam = self.epoch / 15.0
-        # else:      # 15、16、17、18、19
-        lam = 0.00015
-        total_loss = (loss_HiS + loss_MiS + loss_LoS) + 1.0 * (loss_consis_HiS + loss_consis_LoS) + lam * loss_sd
-        # total_loss = (loss_HiS + loss_MiS + loss_LoS) + 1.0 * (loss_consis_HiS + loss_consis_LoS)
-        losses["loss_sd"] = loss_sd
+        total_loss = (loss_HiS + loss_MiS + loss_LoS) + 1.0 * (loss_consis_HiS + loss_consis_LoS)
+
         losses["loss"] = total_loss
         losses["loss_HiS"] = loss_HiS
         losses["loss_MiS"] = loss_MiS
@@ -837,33 +701,6 @@ class Trainer:
         losses["loss_consis_LoS"] = loss_consis_LoS
         # print("loss_HiS:",loss_HiS.cpu().data, "loss_MiS:",loss_MiS.cpu().data, "loss_LoS:",loss_LoS.cpu().data, "loss_consis_HiS:",loss_consis_HiS.cpu().data, "loss_consis_LoS:",loss_consis_LoS.cpu().data, "loss:",total_loss.cpu().data)
         return losses
-
-    def compute_consistency_loss(self, inputs, disp, disp_2):
-        loss_c = 0
-        cnt = 1.0
-        for i in range(self.opt.batch_size):
-            x1, y1 = int(inputs[("dxy")][i,0]), int(inputs[("dxy")][i,1])
-            x2, y2 = int(inputs[("dxy_2")][i,0]), int(inputs[("dxy_2")][i,1])
-            x_min, x_max = min(x1,x2), max(x1,x2)
-            y_min, y_max = min(y1,y2), max(y1,y2)
-            if x1==x2 and y1==y2:
-                continue
-            if abs(x1-x2) >= self.opt.width or abs(y1-y2) >= self.opt.height:
-                continue
-            x_s, y_s = x_max, y_max
-            x_e, y_e = x_min+self.opt.width, y_min+self.opt.height
-            if (x_e-x_s)*(y_e-y_s) <= (self.opt.width * self.opt.height)*1.0/4 or (x_e-x_s)*(y_e-y_s) >= (self.opt.width * self.opt.height)*7.0/8:
-                continue
-            disp_unite_1 = disp[i, 0, abs(y1-y_s):abs(y1-y_e), abs(x1-x_s):abs(x1-x_e)]
-            disp_unite_2 = disp_2[i, 0, abs(y2-y_s):abs(y2-y_e), abs(x2-x_s):abs(x2-x_e)]
-            diff_disp = ((disp_unite_1 - disp_unite_2).abs() /
-                  (disp_unite_1 + disp_unite_2).abs()).clamp(0, 1)
-            loss_c += diff_disp.mean()
-            cnt += 1
-
-        loss_c /= cnt
-        return loss_c
-
 
     def compute_depth_losses(self, inputs, outputs, losses):
         """Compute depth metrics, to allow monitoring during training
@@ -895,24 +732,6 @@ class Trainer:
         for i, metric in enumerate(self.depth_metric_names):
             losses[metric] = np.array(depth_errors[i].cpu())
 
-    # def log_time(self, batch_idx, duration, lH, lM, lL, cH, cL, loss, sd=0):
-    #     """Print a logging statement to the terminal
-    #     """
-    #     samples_per_sec = self.opt.batch_size / duration
-    #     time_sofar = time.time() - self.start_time
-    #     training_time_left = (
-    #         self.num_total_steps / self.step - 1.0) * time_sofar if self.step > 0 else 0
-    #     if not self.opt.use_out_feature:
-    #         print_string = "epo {:>3} | bat {:>6} | ex/s: {:5.1f}" + \
-    #             " | lH: {:.4f} | lM: {:.4f} | lL: {:.4f} | cH: {:.10f} | cL: {:.10f} | loss: {:.5f} | te: {} | tl: {} | lr: {}"
-    #         print(print_string.format(self.epoch, batch_idx, samples_per_sec, lH, lM, lL, cH, cL, loss,
-    #                                   sec_to_hm_str(time_sofar), sec_to_hm_str(training_time_left), self.model_optimizer.state_dict()['param_groups'][0]['lr']))
-    #     else:
-    #         print_string = "epoch {:>3} | batch {:>6} | ex/s: {:5.1f}" + \
-    #                        " | lH: {:.4f} | lM: {:.4f} | lL: {:.4f} | cH: {:.10f} | cL: {:.10f} | sd: {:.10f} | loss: {:.5f} | te: {} | tl: {} | lr: {}"
-    #         print(print_string.format(self.epoch, batch_idx, samples_per_sec, lH, lM, lL, cH, cL, sd, loss,
-    #                                   sec_to_hm_str(time_sofar), sec_to_hm_str(training_time_left),
-    #                                   self.model_optimizer.state_dict()['param_groups'][0]['lr']))
     def log_time(self, batch_idx, duration, lH, lM, lL, cH, cL, sd, loss):
         """Print a logging statement to the terminal
         """
@@ -1013,7 +832,7 @@ class Trainer:
         if os.path.isfile(optimizer_load_path):
             print("Loading Adam weights")
             optimizer_dict = torch.load(optimizer_load_path)
-            optimizer_dict['param_groups'][0]['lr'] = 1e-05
+            # optimizer_dict['param_groups'][0]['lr'] = 1e-05
             # optimizer_dict['param_groups'][1]['lr'] = 5e-05
             # optimizer_dict['param_groups'][2]['lr'] = 5e-05
             self.model_optimizer.load_state_dict(optimizer_dict)
