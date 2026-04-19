@@ -89,26 +89,17 @@ def evaluate(opt):
         encoder = networks.mpvit_small() #networks.ResnetEncoder(opt.num_layers, False)
         encoder.num_ch_enc = [64,128,216,288,288]  # = networks.ResnetEncoder(opt.num_layers, False)
         depth_decoder = networks.DepthDecoder(use_channel_mamba=opt.use_channel_mamba,
-                                              use_channel_mamba_2=opt.use_channel_mamba_2)
+                                              use_channel_mamba_2=opt.use_channel_mamba_2,
+                                              use_HAM=opt.use_HAM)
         model_dict = encoder.state_dict()
         encoder.load_state_dict({k: v for k, v in encoder_dict.items() if k in model_dict})
         depth_decoder.load_state_dict(torch.load(decoder_path))
-        if opt.use_pos_encording:
-            encode_pos_encoding = networks.PositionalEncoding(192, 640, 64)
-            decode_pos_encoding = networks.PositionalEncoding(192, 640, 32)
-            encode_pos_encoding.cuda()
-            encode_pos_encoding.eval()
-            decode_pos_encoding.cuda()
-            decode_pos_encoding.eval()
         encoder.cuda()
         encoder.eval()
         depth_decoder.cuda()
         depth_decoder.eval()
-        u = sum(p.numel() for p in encoder.parameters() if p.requires_grad) + sum(
-            p.numel() for p in depth_decoder.parameters() if p.requires_grad)
-        print("模型参数量为{}".format(u))
-        pred_disps = []
 
+        pred_disps = []
         print("-> Computing predictions with size {}x{}".format(
             encoder_dict['width'], encoder_dict['height']))
 
@@ -119,15 +110,7 @@ def evaluate(opt):
                     # Post-processed results require each image to have two forward passes
                     input_color = torch.cat((input_color, torch.flip(input_color, [3])), 0)
 
-                if opt.use_pos_encording:
-                    data[("edge_map", 0, 0)] = data[("edge_map", 0, 0)].cuda()
-                    encode_pos_encode = encode_pos_encoding(data[("edge_map", 0, 0)], 96, 320)
-                    decode_pos_encode = decode_pos_encoding(data[("edge_map", 0, 0)], 96, 320)
-                    feature = encoder(input_color, encode_pos_encode)
-                    feature.append(decode_pos_encode)
-                    output = depth_decoder(feature)
-                else:
-                    output = depth_decoder(encoder(input_color, None))
+                output = depth_decoder(encoder(input_color, None))
 
                 pred_disp, _ = disp_to_depth(output[("disp", 0)], opt.min_depth, opt.max_depth)
                 pred_disp = pred_disp.cpu()[:, 0].numpy()
@@ -236,8 +219,6 @@ def evaluate(opt):
 
     mean_errors = np.array(errors).mean(0)
 
-
-
     results_edit=open('results.txt',mode='a')
     results_edit.write("\n " + 'model_name: %s '%(opt.load_weights_folder))
     results_edit.write("\n " + ("{:>8} | " * 7).format("abs_rel", "sq_rel", "rmse", "rmse_log", "a1", "a2", "a3"))
@@ -247,7 +228,8 @@ def evaluate(opt):
     print(("&{: 8.3f}  " * 7).format(*mean_errors.tolist()) + "\\\\")
     print("\n-> Done!")
 
-
 if __name__ == "__main__":
     options = MonodepthOptions()
     evaluate(options.parse())
+
+# CUDA_VISIBLE_DEVICES=0 python evaluate_depth.py --eval_mono --height 192 --width 640 --scales 0 --data_path /media/a/b81bd773-44f1-4674-846e-436d8b829731/KITTI_raw_data --png --use_channel_mamba --use_channel_mamba_2 --use_HAM --load_weights_folder models/monovit

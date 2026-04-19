@@ -142,10 +142,10 @@ def evaluate(opt):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_path', type=str,
-                        help='path to nyu data', default="I:/lw_MDE/NYUv2_test",
+                        help='path to nyu data', default="D:/NYUv2_test",
                         required=False)
     parser.add_argument("--load_weights_folder",
-                        type=str, default='models/RA-Depth_sd_dskip',
+                        type=str, default='models/CMambaDepth',
                         required=False,
                         help="name of model to load")
     parser.add_argument("--num_layers",
@@ -180,4 +180,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     evaluate(args)
 
-# python nyuv2_eval_depth.py --data_path D:\NYUv2_test --load_weights_folder models/RA-Depth
+# python nyuv2_eval_depth.py --data_path D:\NYUv2_test --load_weights_folder models/CMambaDepth --use_channel_mamba --use_channel_mamba_2 --use_HAM

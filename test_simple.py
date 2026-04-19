@@ -180,4 +180,6 @@ if __name__ == '__main__':
     test_simple(args)
 
 
-#CUDA_VISIBLE_DEVICES=0 python test_simple.py --use_channel_mamba --use_channel_mamba_2 --image_path /test/monodepth2-master/assets/test.png --model_name my_train_2025_0706_6_438274337_weights_1  --use_HAM
+#CUDA_VISIBLE_DEVICES=0 python test_simple.py --use_channel_mamba --use_channel_mamba_2 --use_HAM --model_name CMambaDepth --image_path img/0000000002.png
+#CUDA_VISIBLE_DEVICES=0 python test_simple.py --use_channel_mamba --use_channel_mamba_2 --use_HAM --model_name CMambaDepth_ddad_2 --image_path img/0000000002.png --dataset ddad
+# DDAD数据集图片推理时networks/depth_decoder_msf.py里的downsample_size = [2, 1, 0, 1, 0, 1, 1]需要修改成downsample_size = [2, 1, 0, 1, 0, 1, 2]否则网络层对不上

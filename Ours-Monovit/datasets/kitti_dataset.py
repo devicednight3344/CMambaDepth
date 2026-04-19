@@ -8,7 +8,6 @@ from PIL import Image
 
 from kitti_utils import generate_depth_map
 from .mono_dataset import MonoDataset
-from .seg_utils import labels
 
 def pil_loader_gray(path):
     img = Image.open(path)
@@ -121,22 +120,6 @@ class KITTIRAWDataset(KITTIDataset):
 
         return depth_gt
 
-    def get_seg_map(self, folder, frame_index, side, do_flip):
-        path = self.get_image_path(folder, frame_index, side)
-        path = path.replace('Kitti', 'Kitti/segmentation')
-        path = path.replace('/data', '')
-
-        seg = self.loader(path, mode='P')
-        seg_copy = np.array(seg.copy())
-
-        for k in np.unique(seg):
-            seg_copy[seg_copy == k] = labels[k].trainId
-        seg = Image.fromarray(seg_copy, mode='P')
-
-        if do_flip:
-            seg = seg.transpose(pil.FLIP_LEFT_RIGHT)
-        return seg
-
 
 class KITTIOdomDataset(KITTIDataset):
     """KITTI dataset for odometry training and testing
@@ -185,19 +168,3 @@ class KITTIDepthDataset(KITTIDataset):
             depth_gt = np.fliplr(depth_gt)
 
         return depth_gt
-
-    def get_seg_map(self, folder, frame_index, side, do_flip):
-        path = self.get_image_path(folder, frame_index, side)
-        path = path.replace('Kitti', 'Kitti/segmentation')
-        path = path.replace('/data', '')
-
-        seg = self.loader(path, mode='P')
-        seg_copy = np.array(seg.copy())
-
-        for k in np.unique(seg):
-            seg_copy[seg_copy == k] = labels[k].trainId
-        seg = Image.fromarray(seg_copy, mode='P')
-
-        if do_flip:
-            seg = seg.transpose(pil.FLIP_LEFT_RIGHT)
-        return seg

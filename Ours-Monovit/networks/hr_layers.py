@@ -3,16 +3,13 @@ from __future__ import absolute_import, division, print_function
 import numpy as np
 import math
 
-# from matplotlib import pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-# from sympy import false
 
 from mamba_ssm import Mamba
 from einops import rearrange, repeat
 from mamba_ssm.utils.generation import InferenceParams
-from mmcv.cnn import build_norm_layer
 from mamba_ssm.ops.selective_scan_interface import selective_scan_fn, selective_scan_ref
 
 def upsample(x):
@@ -198,29 +195,6 @@ class Conv1x1(nn.Module):
     def forward(self, x):
         return self.conv(x)
 
-class ASPP(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super(ASPP, self).__init__()
-
-        self.atrous_block1 = nn.Conv2d(in_channels, out_channels, 1, 1)
-        self.atrous_block6 = nn.Conv2d(in_channels, out_channels, 3, 1, padding=6, dilation=6)
-        self.atrous_block12 = nn.Conv2d(in_channels, out_channels, 3, 1, padding=12, dilation=12)
-        self.atrous_block18 = nn.Conv2d(in_channels, out_channels, 3, 1, padding=18, dilation=18)
-
-        self.conv1x1 = nn.Conv2d(out_channels * 4, out_channels, 1, 1)
-
-    def forward(self, features):
-        features_1 = self.atrous_block18(features[0])
-        features_2 = self.atrous_block12(features[1])
-        features_3 = self.atrous_block6(features[2])
-        features_4 = self.atrous_block1(features[3])
-
-        output_feature = [features_1, features_2, features_3, features_4]
-        output_feature = torch.cat(output_feature, 1)
-
-        return self.conv1x1(output_feature)
-
-
 class BackprojectDepth(nn.Module):
     """Layer to transform a depth image into a point cloud
     """
@@ -404,7 +378,6 @@ class ChannelAttention(nn.Module):
 
 
 ## SpatialAttetion
-
 class SpatialAttention(nn.Module):
     def __init__(self, kernel_size=7):
         super(SpatialAttention, self).__init__()
@@ -828,124 +801,6 @@ class MambaModule_2(nn.Module):
 
         return final_features
 
-# class MambaModule(nn.Module):
-#     def __init__(self, input_channels, d_model, mamba_sqe, mamba_sqe_list, linear_in_channel, out_channel,
-#                  patch_size=None, d_conv=3, dt_rank=4, layer_idx=0):
-#         super(MambaModule, self).__init__()
-#         self.convs = nn.ModuleDict()
-#         self.d_model = d_model
-#         self.mamba_sqe = mamba_sqe
-#         self.mamba_sqe_list = mamba_sqe_list
-#         self.patch_size = patch_size
-#         d_model_origin = input_channels // mamba_sqe
-#         out_sqe_num = linear_in_channel // d_model_origin
-#         if patch_size != None:
-#             self.convs["patch_embedding"] = nn.Sequential(nn.Conv2d(input_channels, d_model * mamba_sqe, 3,
-#                                                                     padding=1, groups=mamba_sqe, bias=False),
-#                                                           nn.BatchNorm2d(d_model * mamba_sqe),
-#                                                           nn.Conv2d(d_model * mamba_sqe, d_model * mamba_sqe, patch_size,
-#                                                                     patch_size, groups=mamba_sqe, bias=False))
-#
-#             self.layer_norm_patch_decoder = nn.LayerNorm(d_model)
-#             # self.convs["patch_decoder"] = nn.Sequential(
-#             #         nn.Conv2d(out_sqe_num * d_model, out_sqe_num * d_model, 1, groups=out_sqe_num, bias=False),
-#             #         nn.Conv2d(out_sqe_num * d_model, out_sqe_num * d_model, 3, padding=1, groups=out_sqe_num, bias=False),
-#             #         nn.BatchNorm2d(out_sqe_num * d_model),
-#             #         nn.ELU(inplace=True))
-#             self.convs["patch_decoder"] = nn.Sequential(nn.Conv2d(out_sqe_num * d_model, out_sqe_num * d_model, 1,
-#                                                                   groups=out_sqe_num, bias=False),
-#                                                         nn.BatchNorm2d(out_sqe_num * d_model))
-#         else:
-#             self.convs["embedding"] = nn.Sequential(nn.Conv2d(input_channels, d_model * mamba_sqe, 3,
-#                                                               padding=1, groups=mamba_sqe, bias=False),
-#                                                     nn.BatchNorm2d(d_model * mamba_sqe),
-#                                                     nn.Conv2d(d_model * mamba_sqe, d_model * mamba_sqe, 1,
-#                                                               groups=mamba_sqe, bias=False))
-#         self.layer_norm = nn.LayerNorm(d_model)
-#         self.mamba = nn.ModuleDict()
-#         for i in range(len(mamba_sqe_list)):
-#             self.mamba["{}".format(i)] = Mamba(d_model=d_model, d_conv=d_conv, dt_rank=dt_rank, layer_idx=layer_idx)
-#         # self.convs["out_embedding"] = Conv3x3(out_sqe_num * d_model, linear_in_channel)
-#         self.convs["out_embedding"] = nn.Conv2d(out_sqe_num * d_model, linear_in_channel, 3,
-#                                                 padding=1, groups=out_sqe_num)
-#         self.out_batch_norm = nn.BatchNorm2d(linear_in_channel)
-#         self.convs["out_fusion"] = Conv3x3(linear_in_channel*2, out_channel)
-#         self.out_fusion_batch_norm = nn.BatchNorm2d(out_channel)
-#         self.nonlin = nn.ELU(inplace=True)
-#
-#     def forward(self, features, high_feature, features_identity, expanded_ratio, out_sqe_num, index):
-#         inference_params = InferenceParams(max_seqlen=12, max_batch_size=23040, seqlen_offset=1)
-#         # torch.save(torch.cat([features, high_feature], 1), "img/02/X_19weights_{}_88.pt".format(index))
-#         expanded_high_feature = high_feature.repeat(1, expanded_ratio, 1, 1)
-#         features = features + expanded_high_feature
-#         features = torch.cat([features, high_feature], 1)
-#         if self.patch_size != None:
-#             features = self.convs["patch_embedding"](features)
-#             # features:12x144x24x80
-#         else:
-#             features = self.convs["embedding"](features)
-#         # torch.save(features, "img/02/X_19weights_{}_00.pt".format(index))
-#         b, c, h, w = features.size()
-#         features = rearrange(features, 'b c h w -> (b h w) c', b=b, c=c, h=h, w=w)
-#         features = rearrange(features, 'b (s d) -> b s d', s=self.mamba_sqe, d=self.d_model)
-#         # features:23040x8x18
-#         features = self.layer_norm(features)
-#         mamba_sqe_chunk_orig = 0
-#         return_ssm_state = True
-#         record_out = False
-#         features_final = []
-#         for i in range(len(self.mamba_sqe_list)):
-#             if i == (len(self.mamba_sqe_list) - 1):
-#                 return_ssm_state = False
-#             if mamba_sqe_chunk_orig == (self.mamba_sqe - out_sqe_num):
-#                 record_out = True
-#             mamba_sqe_chunk = self.mamba_sqe_list[i]
-#             if record_out:
-#                 out, ssm_state = self.mamba["{}".format(i)](
-#                     features[:, mamba_sqe_chunk_orig:mamba_sqe_chunk + mamba_sqe_chunk_orig],
-#                     inference_params)
-#                 features_final.append(out)
-#                 if return_ssm_state:
-#                     inference_params.key_value_memory_dict[0][1] = ssm_state
-#             else:
-#                 _, ssm_state = self.mamba["{}".format(i)](
-#                     features[:, mamba_sqe_chunk_orig:mamba_sqe_chunk + mamba_sqe_chunk_orig],
-#                     inference_params)
-#                 inference_params.key_value_memory_dict[0][1] = ssm_state
-#             mamba_sqe_chunk_orig = mamba_sqe_chunk + mamba_sqe_chunk_orig
-#         features = torch.cat(features_final, 1)
-#         # out_sqe_num = 2
-#         # features:23040x2x18
-#         B, s, d = features.size()
-#         if self.patch_size != None:
-#             features = self.layer_norm_patch_decoder(features)
-#             features = rearrange(features, 'b s d -> b (s d)', b=B, s=s, d=d)
-#         else:
-#             features = rearrange(features, 'b s d -> b (s d)', b=B, s=s, d=d)
-#             # 23040x72
-#         B, c = features.size()
-#         features = rearrange(features, '(b h w) c -> b c h w', b=b, c=c, h=h, w=w)
-#         # 12x72x24x80
-#         # torch.save(features, "img/02/X_19weights_{}_01.pt".format(index))
-#         if self.patch_size != None:
-#             features = F.interpolate(features, scale_factor=self.patch_size, mode="nearest")
-#             features = self.convs["patch_decoder"](features)
-#             # torch.save(features, "img/02/X_19weights_{}_02.pt".format(index))
-#         features = self.convs["out_embedding"](features)
-#         features = self.out_batch_norm(features)
-#         # torch.save(features, "img/02/X_19weights_{}_04.pt".format(index))
-#         features = self.nonlin(features)
-#         # torch.save(features, "img/02/X_19weights_{}.pt".format(index))
-#         # torch.save(features_identity, "img/02/X_19weights_features_identity_{}.pt".format(index))
-#         features = torch.cat([features_identity, features], 1)
-#         features = self.convs["out_fusion"](features)
-#         # torch.save(features, "img/02/X_19weights_{}_05.pt".format(index))
-#         features = self.out_fusion_batch_norm(features)
-#         # torch.save(features, "img/02/X_19weights_{}_06.pt".format(index))
-#         features = self.nonlin(features)
-#         # torch.save(features, "img/02/X_19weights_{}_03.pt".format(index))
-#         return features
-
 class MambaModule(nn.Module):
     def __init__(self, input_channels, hide_channel, d_model, mamba_sqe, mamba_sqe_list, mamba_channel_list,
                  linear_in_channel, out_channel, out_channels, out_sqe_num, out_mamba_sqe_num, d_model_origin, downsample_size,
@@ -1006,7 +861,6 @@ class MambaModule(nn.Module):
 
     def forward(self, features, high_feature, features_identity, expanded_ratio, out_sqe_num, index):
         inference_params = InferenceParams(max_seqlen=12, max_batch_size=23040, seqlen_offset=1)
-        # torch.save(torch.cat([features, high_feature], 1), "D:\题目资料\单目\余弦相似度测试图片/02/X_16weights_{}_88.pt".format(index))
         expanded_high_feature = high_feature.repeat(1, expanded_ratio, 1, 1)
         features = features + expanded_high_feature
         if index == "31" or index == "22":
@@ -1020,7 +874,6 @@ class MambaModule(nn.Module):
         else:
             features = self.convs["conv_0"](features)
         features = self.convs["embedding"](features)
-        # torch.save(features, "D:\题目资料\单目\余弦相似度测试图片/02/X_16weights_{}_00.pt".format(index))
         b, c, h, w = features.size()
         features = rearrange(features, 'b c h w -> (b h w) c', b=b, c=c, h=h, w=w)
         features = rearrange(features, 'b (s d) -> b s d', s=self.mamba_sqe, d=self.d_model)
@@ -1058,7 +911,6 @@ class MambaModule(nn.Module):
         # 23040x72
         B, c = features.size()
         features = rearrange(features, '(b h w) c -> b c h w', b=b, c=c, h=h, w=w)
-        # torch.save(features, "D:\题目资料\单目\余弦相似度测试图片/02/X_16weights_{}_01.pt".format(index))
         features = self.convs["decoder_embedding"](features)
         # 12x72x24x80
         middle_features = []
@@ -1079,155 +931,13 @@ class MambaModule(nn.Module):
                 middle_feature = self.convs["upconv_{}_1".format(idx)](middle_feature)
             else:
                 middle_feature = self.convs["conv_{}_1".format(idx)](middle_feature)
-            # if idx == 0:
-            #     torch.save(middle_feature, "img/02/X_19weights_{}_02_前半部分.pt".format(index))
-            # torch.save(middle_feature, "img/02/X_19weights_{}_02.pt".format(index))
             middle_feature = torch.cat([middle_feature, input_feature], 1)
             middle_feature = self.convs["fusion_{}".format(idx)](middle_feature)
-            # if idx == 0:
-            #     torch.save(middle_feature, "img/02/X_19weights_{}_05_前半部分.pt".format(index))
-            # torch.save(middle_feature, "img/02/X_19weights_{}_05.pt".format(index))
             final_features.append(middle_feature)
         features = torch.cat(final_features, 1)
         features = self.convs["out_fusion"](features)
         features = self.nonlin(features)
         return features
-
-class MambaModule_3(nn.Module):
-    def __init__(self, input_channels, hide_channel, hide_channels, out_channel, out_channels, d_model, mamba_sqe,
-                 mamba_channel_list, Anchor, height, sequence_length, downsample_size=None, mamba_num=1, d_conv=3, dt_rank=3):
-        super(MambaModule_3, self).__init__()
-        self.convs = nn.ModuleDict()
-        self.d_model = d_model
-        self.mamba_sqe = mamba_sqe
-        self.mamba_channel_list = mamba_channel_list
-        self.height = height
-        self.sequence_length = sequence_length
-        self.downsample_size = downsample_size
-        self.mamba_num = mamba_num
-        self.mambas = nn.ModuleDict()
-
-        for idx in range(sequence_length):
-            if downsample_size[idx] != 0:
-                if idx != Anchor:
-                    for i in range(downsample_size[idx]):
-                        if i == 0:
-                            self.convs["downconv_{}_{}_0".format(idx, i)] = nn.Sequential(
-                                nn.Conv2d(input_channels[idx], hide_channels[idx], 3, 2, 1, bias=False),
-                                nn.BatchNorm2d(hide_channels[idx]),
-                                nn.ELU(inplace=True))
-                        else:
-                            self.convs["downconv_{}_{}_0".format(idx, i)] = nn.Sequential(
-                                nn.Conv2d(hide_channels[idx], hide_channels[idx], 3, 2, 1, bias=False),
-                                nn.BatchNorm2d(hide_channels[idx]),
-                                nn.ELU(inplace=True))
-                    self.convs["upconv_{}_1".format(idx)] = nn.Sequential(
-                        nn.Conv2d(self.mamba_channel_list[idx], self.mamba_channel_list[idx], 1, bias=False),
-                        # nn.Conv2d(self.mamba_channel_list[idx], self.mamba_channel_list[idx], 3, padding=1, bias=False),
-                        nn.BatchNorm2d(self.mamba_channel_list[idx]),
-                        nn.ELU(inplace=True))
-                else:
-                    self.convs["upconv_{}_0".format(idx)] = nn.Sequential(
-                        nn.Conv2d(input_channels[idx], hide_channels[idx], 1, bias=False),
-                        nn.BatchNorm2d(hide_channels[idx]),
-                        nn.ELU(inplace=True))
-                    for i in range(downsample_size[idx]):
-                        self.convs["downconv_{}_{}_1".format(idx, i)] = nn.Sequential(
-                            nn.Conv2d(self.mamba_channel_list[idx], self.mamba_channel_list[idx], 3, 2, 1, bias=False),
-                            nn.BatchNorm2d(self.mamba_channel_list[idx]),
-                            nn.ELU(inplace=True))
-            else:
-                # self.convs["conv_{}_0".format(idx)] = ConvBlock(input_channels[idx], hide_channels[idx])
-                self.convs["conv_{}_0".format(idx)] = ConvBlock1x1(input_channels[idx], hide_channels[idx])
-                # self.convs["conv_{}_1".format(idx)] = ConvBlock(self.mamba_channel_list[idx],
-                #                                                 self.mamba_channel_list[idx])
-                self.convs["conv_{}_1".format(idx)] = ConvBlock1x1(self.mamba_channel_list[idx],
-                                                                   self.mamba_channel_list[idx])
-            # self.convs["fusion_{}".format(idx)] = ConvBlock(input_channels[idx] + self.mamba_channel_list[idx],
-            #                                                 out_channels[idx])
-            # self.convs["fusion_{}".format(idx)] = ConvBlock1x1(input_channels[idx] + self.mamba_channel_list[idx],
-            #                                                     out_channels[idx])
-            self.convs["fusion_{}".format(idx)] = nn.Sequential(nn.Conv2d(input_channels[idx] + self.mamba_channel_list[idx],
-                                                                          out_channels[idx],3,padding=1),
-                                                                nn.ELU(inplace=True))
-        self.nonlin = nn.ELU(inplace=True)
-        self.convs["embedding"] = nn.Conv2d(hide_channel, d_model * self.mamba_sqe, 3, padding=1, groups=self.mamba_sqe)
-        for j in range(self.mamba_num):
-            self.mambas["layer_norm_{}".format(j)] = nn.LayerNorm(d_model)
-            drp = [x.item() for x in torch.linspace(0, 0.15, self.mamba_num)]
-            self.mambas["SS2D_{}".format(j)] = SS2D(d_model=d_model, mamba_sqe=mamba_sqe, d_conv=d_conv,
-                                                    dt_rank=dt_rank, dropout=drp[j])
-        self.layer_norm_2 = nn.LayerNorm(d_model)
-        self.convs["decoder_embedding"] = nn.Conv2d(d_model*self.mamba_sqe, out_channel, 3, padding=1,
-                                                    groups=self.mamba_sqe)
-
-    def forward(self, input_features):
-        middle_features = []
-        for idx in range(self.sequence_length):
-            middle_feature = input_features[idx]
-            _, _, h, w = middle_feature.size()
-            if h > self.height:
-                for i in range(self.downsample_size[idx]):
-                    # h_scale = h // (2 ** (i + 1))
-                    # w_scale = w // (2 ** (i + 1))
-                    # middle_feature = F.interpolate(middle_feature, [h_scale, w_scale], mode="nearest")
-                    middle_feature = self.convs["downconv_{}_{}_0".format(idx, i)](middle_feature)
-                middle_features.append(middle_feature)
-            elif h < self.height:
-                h_scale = h * (2 ** self.downsample_size[idx])
-                w_scale = w * (2 ** self.downsample_size[idx])
-                middle_feature = F.interpolate(middle_feature, [h_scale, w_scale], mode="nearest")
-                middle_feature = self.convs["upconv_{}_0".format(idx)](middle_feature)
-                middle_features.append(middle_feature)
-            else:
-                middle_features.append(self.convs["conv_{}_0".format(idx)](middle_feature))
-        feature = torch.cat(middle_features, 1)
-        feature = self.convs["embedding"](feature)
-        b, c, h, w = feature.size()
-        feature = rearrange(feature, 'b (s d) h w -> (b s) d h w', b=b, s=self.mamba_sqe, d=self.d_model, h=h, w=w)
-        feature = rearrange(feature, 'b d h w -> b h w d', d=self.d_model, h=h, w=w)
-        for j in range(self.mamba_num):
-            feature_identity = feature
-            feature = self.mambas["layer_norm_{}".format(j)](feature)
-            # features:23040x8x18
-            feature = self.mambas["SS2D_{}".format(j)](feature)
-            feature = feature_identity + feature
-        feature = self.layer_norm_2(feature)
-        B, h, w, c = feature.size()
-        feature = rearrange(feature, 'b h w d -> b d h w', b=B, d=self.d_model, h=h, w=w)
-        feature = rearrange(feature, '(b s) d h w -> b (s d) h w', b=b, s=self.mamba_sqe, d=self.d_model, h=h, w=w)
-        feature = self.convs["decoder_embedding"](feature)
-        middle_features = []
-        d_model_orin = 0
-        for channel_num in self.mamba_channel_list:
-            d_model_next = d_model_orin + channel_num
-            middle_features.append(feature[:, d_model_orin:d_model_next])
-            d_model_orin = d_model_orin + channel_num
-
-        final_features = []
-        for idx in range(self.sequence_length):
-            input_feature = input_features[idx]
-            middle_feature = middle_features[idx]
-            _, _, h, w = input_feature.size()
-            if h > self.height:
-                _, _, h, w = middle_feature.size()
-                h_scale = h * (2 ** self.downsample_size[idx])
-                w_scale = w * (2 ** self.downsample_size[idx])
-                middle_feature = F.interpolate(middle_feature, [h_scale, w_scale], mode="nearest")
-                middle_feature = self.convs["upconv_{}_1".format(idx)](middle_feature)
-            elif h < self.height:
-                for i in range(self.downsample_size[idx]):
-                    # h_scale = h // (2 ** (i + 1))
-                    # w_scale = w // (2 ** (i + 1))
-                    # middle_feature = F.interpolate(middle_feature, [h_scale, w_scale], mode="nearest")
-                    middle_feature = self.convs["downconv_{}_{}_1".format(idx, i)](middle_feature)
-            else:
-                middle_feature = self.convs["conv_{}_1".format(idx)](middle_feature)
-            middle_feature = torch.cat([middle_feature, input_feature], 1)
-            middle_feature = self.convs["fusion_{}".format(idx)](middle_feature)
-            final_features.append(middle_feature)
-
-        return final_features
 
 class fSEModule(nn.Module):
     def __init__(self, high_feature_channel, low_feature_channels, output_channel=None):

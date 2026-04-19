@@ -53,48 +53,6 @@ class KITTIDataset(MonoDataset):
 
         return color
 
-    def get_guide(self, data_path, folder, frame_index, side, img_ext='.png'):
-        side_map = {"2": 2, "3": 3, "l": 2, "r": 3}
-        f_str = "{:010d}{}".format(frame_index, img_ext)
-        image_path = os.path.join(folder, "image_0{}/data".format(side_map[side]))
-        guide = pil_loader_gray(os.path.join(data_path, "Save_picture", "guides", image_path, f_str))
-        return guide
-
-    def get_edge_region(self, data_path, folder, frame_index, side, img_ext='.png'):
-        side_map = {"2": 2, "3": 3, "l": 2, "r": 3}
-        f_str = "{:010d}{}".format(frame_index, img_ext)
-        image_path = os.path.join(folder, "image_0{}/data".format(side_map[side]))
-        edge_region = pil_loader_gray(os.path.join(data_path, "Save_picture", "edge_regions", image_path, f_str))
-        return edge_region
-
-    def get_edge_mask(self, data_path, folder, frame_index, side, img_ext='.png'):
-        side_map = {"2": 2, "3": 3, "l": 2, "r": 3}
-        f_str = "{:010d}{}".format(frame_index, img_ext)
-        image_path = os.path.join(folder, "image_0{}/data".format(side_map[side]))
-        edge_mask = pil_loader_gray(os.path.join(data_path, "Save_picture", "edge_masks", image_path, f_str))
-        return edge_mask
-
-    def get_indice(self, data_path, folder, frame_index, side, indice_num, img_ext='.npy'):
-        middle_indices = np.ones((indice_num,2))
-        side_map = {"2": 2, "3": 3, "l": 2, "r": 3}
-        f_str = "{:010d}{}".format(frame_index, img_ext)
-        indice_path = os.path.join(folder, "image_0{}/data".format(side_map[side]))
-        loaded_indices = np.load(os.path.join(data_path, "Save_picture", "indices", indice_path, f_str))
-        real_indice_num, _ = loaded_indices.shape
-        # 用了SAM分割之后real_indice_num大概等于6000
-        if real_indice_num <= indice_num:
-            middle_indices[:real_indice_num] = loaded_indices
-        else:
-            middle_indices = loaded_indices[:indice_num]
-        return middle_indices
-
-    def get_edge(self, data_path, folder, frame_index, side, img_ext='.png'):
-        side_map = {"2": 2, "3": 3, "l": 2, "r": 3}
-        f_str = "{:010d}{}".format(frame_index, img_ext)
-        image_path = os.path.join(folder, "image_0{}/data".format(side_map[side]))
-        edge = pil_loader_gray(os.path.join(data_path, "Save_picture", "edges", image_path, f_str))
-        return edge
-
 class KITTIStereoDataset(KITTIDataset):
     """KITTI dataset which loads the original velodyne depth maps for ground truth
     """
@@ -144,22 +102,6 @@ class KITTIRAWDataset(KITTIDataset):
             depth_gt = np.fliplr(depth_gt)
 
         return depth_gt
-
-    # def get_seg_map(self, folder, frame_index, side, do_flip):
-    #     path = self.get_image_path(folder, frame_index, side)
-    #     path = path.replace('KITTI_data_raw', 'KITTI_data_raw/segmentation')
-    #     path = path.replace('/data', '')
-    #     seg = self.loader(path, mode='P')
-    #     seg_copy = np.array(seg.copy())
-    #     from .seg_utils import labels
-    #     from PIL import Image
-    #     for k in np.unique(seg):
-    #         seg_copy[seg_copy == k] = labels[k].trainId
-    #     seg = Image.fromarray(seg_copy, mode='P')
-    #
-    #     if do_flip:
-    #         seg = seg.transpose(pil.FLIP_LEFT_RIGHT)
-    #     return seg
 
 class KITTIOdomDataset(KITTIDataset):
     """KITTI dataset for odometry training and testing

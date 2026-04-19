@@ -132,30 +132,6 @@ class MonoDataset(data.Dataset):
                 Tensor_LoS[:, height_re_LoS:self.height, width_re_LoS:self.width] = LoS_part[:, point2:height_re_LoS, point1:width_re_LoS]
                 inputs[(n, im, i)] = Tensor_LoS
 
-            if "guide" in k:
-                n, im, i = k
-                inputs[(n, im, i)] = self.to_tensor(f)
-
-            if "edge_region" in k:
-                n, im, i = k
-                inputs[(n, im, i)] = self.to_tensor(f)
-
-            if "edge_map" in k:
-                n, im, i = k
-                inputs[(n, im, i)] = self.to_tensor(f)
-
-            if "edge_mask" in k:
-                n, im, i = k
-                inputs[(n, im, i)] = self.to_tensor(f)
-
-            if "indice" in k:
-                n, im, i = k
-                inputs[(n, im, i)] = torch.tensor(inputs[(n, im, i)], dtype=torch.long)
-
-            elif "seg" in k:
-                n, im, i = k
-                inputs[(n, im, i)] = torch.tensor(np.array(f)).float().unsqueeze(0)
-
     def __len__(self):
         return len(self.filenames)
 
@@ -253,17 +229,6 @@ class MonoDataset(data.Dataset):
             else:
                 inputs[("color", i, -1)] = self.get_color(folder, frame_index + i, side, do_flip)
 
-        # if True:
-        #     # 只需要生成640x192这个scale引导图，并且注意需要的是前后两帧的引导图和当前帧的边界图
-        #     # for i in self.frame_idxs[1:]:
-        #     #     inputs[("guide", i, 0)] = self.get_guide(self.data_path, folder, frame_index + i, side, self.img_ext)
-        #     inputs[("edge_region", 0, 0)] = self.get_edge_region(self.data_path, folder, frame_index, side, self.img_ext)
-        #     inputs[("edge_map", 0, 0)] = self.get_edge(self.data_path, folder, frame_index, side, self.img_ext)
-        #     # inputs[("edge_mask", 0, 0)] = self.get_edge_mask(self.data_path, folder, frame_index, side, self.img_ext)
-        #     inputs[("indice", 0, 0)] = self.get_indice(self.data_path, folder, frame_index, side,
-        #                                                self.indice_num, ".npy")
-        #     # inputs[("seg", 0, -1)] = self.get_seg_map(folder, frame_index, side, do_flip)
-
         # adjusting intrinsics to match each scale in the pyramid
         for scale in range(self.num_scales):
             K_HiS = self.K.copy()
@@ -289,7 +254,9 @@ class MonoDataset(data.Dataset):
             inputs[("inv_K_LoS", scale)] = torch.from_numpy(inv_K_LoS)
 
         if do_color_aug:
-            color_aug = transforms.ColorJitter.get_params(
+            # color_aug = transforms.ColorJitter.get_params(
+            #     self.brightness, self.contrast, self.saturation, self.hue)
+            color_aug = transforms.ColorJitter(
                 self.brightness, self.contrast, self.saturation, self.hue)
         else:
             color_aug = (lambda x: x)
@@ -320,24 +287,6 @@ class MonoDataset(data.Dataset):
 
     def get_color(self, folder, frame_index, side, do_flip):
         raise NotImplementedError
-
-    def get_guide(self, data_path, folder, frame_index, side, img_ext):
-        raise NotImplementedError
-
-    def get_edge_region(self, data_path, folder, frame_index, side, img_ext):
-        raise NotImplementedError
-
-    def get_edge_mask(self, data_path, folder, frame_index, side, img_ext):
-        raise NotImplementedError
-
-    def get_indice(self, data_path, folder, frame_index, side, indice_num, img_ext):
-        raise NotImplementedError
-
-    def get_edge(self, data_path, folder, frame_index, side, img_ext):
-        raise NotImplementedError
-
-    # def get_seg_map(self, folder, frame_index, side, do_flip):
-    #     raise NotImplementedError
 
     def check_depth(self):
         raise NotImplementedError

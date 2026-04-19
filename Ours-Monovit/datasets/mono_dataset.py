@@ -193,8 +193,6 @@ class MonoDataset(data.Dataset):
                 inputs[("color", i, -1)] = self.get_color(folder, frame_index, other_side, do_flip)
             else:
                 inputs[("color", i, -1)] = self.get_color(folder, frame_index + i, side, do_flip)
-        inputs[("seg", 0, -1)] = self.get_seg_map(folder, frame_index, side, do_flip)
-        inputs[("seg", -1, -1)] = self.get_seg_map(folder, frame_index - 1, side, do_flip)
         if self.is_use_guide_map:
             # 只需要生成640x192这个scale引导图，并且注意需要的是前后两帧的引导图和当前帧的边界图
             # for i in self.frame_idxs[1:]:
@@ -204,8 +202,6 @@ class MonoDataset(data.Dataset):
             # inputs[("edge_mask", 0, 0)] = self.get_edge_mask(self.data_path, folder, frame_index, side, self.img_ext)
             inputs[("indice", 0, 0)] = self.get_indice(self.data_path, folder, frame_index, side,
                                                        self.indice_num, ".npy")
-        elif True:
-            inputs[("edge_map", 0, 0)] = self.get_edge(self.data_path, folder, frame_index, side, self.img_ext)
         # adjusting intrinsics to match each scale in the pyramid
         for scale in range(self.num_scales):
             K = self.K.copy()

@@ -1,11 +1,7 @@
-
 from __future__ import absolute_import, division, print_function
 
-import numpy as np
 import time
 
-import torch
-import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
 # from tensorboardX import SummaryWriter 因为tensorboardX需要高版本的protobuf而torch.utils.tensorboard需要低版本的protobuf
@@ -20,8 +16,6 @@ from layers import *
 
 import datasets
 import networks
-from IPython import embed
-import matplotlib.pyplot as plt
 
 # class Trainer:
 #
@@ -95,12 +89,9 @@ class Trainer:
         # self.parameters_to_train += list(self.models["encoder"].parameters()) # 这行代码必须注释掉
 
         self.models["encoder"].num_ch_enc = [64, 128, 216, 288, 288]
-        if self.opt.use_pyramid:
-            self.models["depth"] = networks.DepthDecoder_2()
-        else:
-            self.models["depth"] = networks.DepthDecoder(use_channel_mamba=self.opt.use_channel_mamba,
-                                                         use_channel_mamba_2=self.opt.use_channel_mamba_2,
-                                                         use_channel_mamba_3=self.opt.use_channel_mamba_3)
+        self.models["depth"] = networks.DepthDecoder(use_channel_mamba=self.opt.use_channel_mamba,
+                                                     use_channel_mamba_2=self.opt.use_channel_mamba_2,
+                                                     use_HAM=self.opt.use_HAM)
         self.models["depth"].to(self.device)
         self.parameters_to_train += list(self.models["depth"].parameters())
 
@@ -117,7 +108,7 @@ class Trainer:
                 self.models["pose"] = networks.PoseDecoder(
                     self.models["pose_encoder"].num_ch_enc,
                     num_input_features=1,
-                    num_frames_to_predict_for=2, use_pose_corre=self.opt.use_pose_corre)
+                    num_frames_to_predict_for=2)
 
             elif self.opt.pose_model_type == "shared":
                 self.models["pose"] = networks.PoseDecoder(
@@ -208,11 +199,6 @@ class Trainer:
         self.backproject_depth = {}
         self.project_3d = {}
         self.Project3D_inv_corre = {}
-        if self.opt.use_pose_corre:
-            self.Project3D_corre = Project3D_corre(self.opt.batch_size, self.opt.height, self.opt.width)
-            self.Project3D_inv_corre = Project3D_inv_corre(self.opt.batch_size, self.opt.height, self.opt.width)
-            self.Project3D_corre.to(self.device)
-            self.Project3D_inv_corre.to(self.device)
         for scale in self.opt.scales:
             h = self.opt.height // (2 ** scale)
             w = self.opt.width // (2 ** scale)
@@ -359,18 +345,9 @@ class Trainer:
                     elif self.opt.pose_model_type == "posecnn":
                         pose_inputs = torch.cat(pose_inputs, 1)
 
-                    if self.opt.use_pose_corre:
-                        axisangle, translation, pose_corre_translation = self.models["pose"](
-                            pose_inputs)
-                        # pose_corre_axisangle和pose_corre_translation的尺寸为12x192x640x3, axisangle的尺寸为12x2x1x3
-                    else:
-                        axisangle, translation = self.models["pose"](pose_inputs)
+                    axisangle, translation = self.models["pose"](pose_inputs)
                     outputs[("axisangle", 0, f_i)] = axisangle
                     outputs[("translation", 0, f_i)] = translation
-                    if self.opt.use_pose_corre:
-                        outputs[("pose_corre_translation", 0, f_i)] = pose_corre_translation + translation[:, 0].unsqueeze(1).detach()
-                        # outputs[("pose_corre_axisangle", 0, f_i)]的尺寸为12x192x640x3
-                        outputs[("dynamic_translation", 0, f_i)] = pose_corre_translation
 
                     # Invert the matrix if the frame id is negative
                     outputs[("cam_T_cam", 0, f_i)] = transformation_from_parameters(
@@ -472,46 +449,6 @@ class Trainer:
                     outputs[("color_identity", frame_id, scale)] = \
                         inputs[("color", frame_id, source_scale)]
 
-    def outputs_color_corre(self, inputs, outputs):
-        if self.opt.use_pose_corre:
-            pose_corre_factor_used_total_loss = 0
-            inputs[("dynamic_seg", 0, 0)] = create_dynamic_mask(inputs[("seg", 0, 0)].transpose(1, 2).transpose(2, 3))
-            # inputs[("dynamic_seg", 0, 0)]的尺寸为[B,H,W,1]
-            for f_i in self.opt.frame_ids[1:]:
-                l1smoothness_loss = l1smoothness(outputs[("dynamic_translation", 0, f_i)], inputs[("seg", 0, 0)])
-                sqrt_sparsity_loss = sqrt_sparsity(outputs[("dynamic_translation", 0, f_i)], inputs[("dynamic_seg", 0, 0)])
-                pose_corre_loss = l1smoothness_loss + 0.2 * sqrt_sparsity_loss
-                pose_corre_factor_used_total_loss = pose_corre_factor_used_total_loss + pose_corre_loss
-            pose_corre_factor_used_total_loss = pose_corre_factor_used_total_loss / len(self.opt.frame_ids[1:])
-            for scale in self.opt.scales:
-                if self.epoch >= 5:
-                    depth = outputs[("depth", 0, scale)]
-                else:
-                    depth = outputs[("depth", 0, scale)].detach()
-                cam_points = self.backproject_depth[0](
-                    depth, inputs[("inv_K", 0)])
-                for i, frame_id in enumerate(self.opt.frame_ids[1:]):
-                    if frame_id == 1:
-                        pix_coords = self.Project3D_corre(cam_points, inputs[("K", 0)],
-                                                          outputs[("axisangle", 0, frame_id)][:, 0].detach(),
-                                                          outputs[("pose_corre_translation", 0, frame_id)])
-                        # outputs[("pose_corre_axisangle", 0, f_i)]的尺寸为12x192x640x3
-                    else:
-                        pix_coords = self.Project3D_inv_corre(cam_points, inputs[("K", 0)],
-                                                          outputs[("axisangle", 0, frame_id)][:, 0].detach(),
-                                                          outputs[("pose_corre_translation", 0, frame_id)])
-                    # pix_coords尺寸为torch.Size([12, 192, 640, 2])
-                    outputs[("sample_corre", frame_id, scale)] = pix_coords
-                    # outputs[("sample_corre", frame_id, scale)]的尺寸为torch.Size([12, 192, 640, 2])
-                    # inputs[("color", frame_id, 0)]的尺寸为torch.Size([12, 3, 192, 640])
-                    outputs[("color_corre", frame_id, scale)] = F.grid_sample(
-                        inputs[("color", frame_id, 0)],
-                        outputs[("sample_corre", frame_id, scale)],
-                        padding_mode="border",
-                        align_corners=True)
-                    # outputs[("color_corre", frame_id, scale)]的尺寸为12x3x192x640
-            return pose_corre_factor_used_total_loss
-
     def compute_reprojection_loss(self, pred, target):
         """Computes reprojection loss between a batch of predicted and target images
         """
@@ -561,7 +498,7 @@ class Trainer:
 
             if self.opt.is_use_guide_map and self.start_guide and (self.start_Res_smooth_guide or self.start_smooth_guide):
                 if scale == 0:
-                    # 生成 recons_loss_guide map
+                    # 生成 Res_guide_mask1
                     middle_disp = disp.detach()
                     middle_disp = F.interpolate(
                         middle_disp, [self.opt.height, self.opt.width], mode="bilinear", align_corners=False)
@@ -577,14 +514,6 @@ class Trainer:
                     reprojection_losses.append(outputs[("L1loss", frame_id, scale)] + outputs[("SSIMloss", frame_id, scale)])
                     # reprojection_losses.append(self.compute_reprojection_loss(pred, target))
                 reprojection_losses = torch.cat(reprojection_losses, 1)
-                # reprojection_losses的尺寸是torch.Size([12, 2, 192, 640])
-                # _, reprojection_idxs = torch.min(reprojection_losses, dim=1)
-                # # reprojection_idxs的尺寸为torch.Size([12, 192, 640])
-                # reprojection_idxs = reprojection_idxs.unsqueeze(1)
-                # outputs[("L1loss_final", 0, scale)] = ((1 - reprojection_idxs) * outputs[("L1loss", -1, scale)] +
-                #                                        reprojection_idxs * outputs[("L1loss", 1, scale)])
-                # outputs[("SSIMloss_final", 0, scale)] = ((1 - reprojection_idxs) * outputs[("SSIMloss", -1, scale)] +
-                #                                          reprojection_idxs * outputs[("SSIMloss", 1, scale)])
             else:
                 # 正常的最小重投影光度损失
                 for frame_id in self.opt.frame_ids[1:]:
@@ -592,15 +521,7 @@ class Trainer:
                     reprojection_losses.append(self.compute_reprojection_loss(pred, target))
 
                 reprojection_losses = torch.cat(reprojection_losses, 1)
-            if self.opt.use_pose_corre and scale == 0:
-                pose_corre_factor_used_total_loss = self.outputs_color_corre(inputs, outputs)
-            if self.opt.use_pose_corre:
-                # 正常的最小重投影光度损失
-                reprojection_pose_corre_losses = []
-                for frame_id in self.opt.frame_ids[1:]:
-                    pred = outputs[("color_corre", frame_id, scale)]
-                    reprojection_pose_corre_losses.append(self.compute_reprojection_loss(pred, target))
-                reprojection_pose_corre_losses = torch.cat(reprojection_pose_corre_losses, 1)
+
             if not self.opt.disable_automasking:
                 identity_reprojection_losses = []
                 for frame_id in self.opt.frame_ids[1:]:
@@ -619,16 +540,12 @@ class Trainer:
                 reprojection_loss = reprojection_losses.mean(1, keepdim=True)
             else:
                 reprojection_loss = reprojection_losses
-                if self.opt.use_pose_corre:
-                    reprojection_pose_corre_loss = reprojection_pose_corre_losses
 
             if not self.opt.disable_automasking:
                 # add random numbers to break ties
                 identity_reprojection_loss += torch.randn(
                     identity_reprojection_loss.shape, device=self.device) * 0.00001
                 combined = torch.cat((identity_reprojection_loss, reprojection_loss), dim=1)
-                if self.opt.use_pose_corre:
-                    combined_pose_corre = torch.cat((identity_reprojection_loss, reprojection_pose_corre_loss), dim=1)
             else:
                 combined = reprojection_loss
             # combined的尺寸为torch.Size([12, 4, 192, 640])
@@ -636,13 +553,9 @@ class Trainer:
                 to_optimise = combined
             else:
                 to_optimise, idxs = torch.min(combined, dim=1)
-                if self.opt.use_pose_corre:
-                    to_optimise_pose_corre, idxs_pose_corre = torch.min(combined_pose_corre, dim=1)
             # to_optimise的尺寸为torch.Size([12, 192, 640])
             # idxs的尺寸为torch.Size([12, 192, 640])
             to_optimise = to_optimise.unsqueeze(1)
-            if self.opt.use_pose_corre:
-                to_optimise_pose_corre = to_optimise_pose_corre.unsqueeze(1)
             # to_optimise和to_optimise_pose_corre的尺寸为torch.Size([12, 1, 192, 640])
             if not self.opt.disable_automasking:
                 outputs["identity_selection/{}".format(scale)] = (
@@ -652,86 +565,42 @@ class Trainer:
             norm_disp = disp / (mean_disp + 1e-7)
 
             if self.start_guide and scale == 0 and self.start_Res_smooth_guide and self.opt.is_use_guide_map:
-                # enhan_factor = self.opt.lr[0] / self.model_optimizer.state_dict()['param_groups'][0]['lr']
                 SSIM_num = self.Conv(outputs["identity_selection/{}".format(scale)].unsqueeze(1))
                 # SSIM_num的尺寸为torch.Size([12, 1, 192, 640])
                 enhan_factor = 0.2
                 if self.start_smooth_guide:
                     inputs[("edge_mask", 0, 0)] = inputs[("edge_map", 0, 0)] + inputs[("edge_region", 0, 0)]
-                    smooth_loss, smooth_loss_guide_mask_2 = get_smooth_loss(norm_disp, color, self.opt.mask3_Threshold,
-                                                        inputs[("edge_mask", 0, 0)], self.start_smooth_guide,
-                                                        enhan_factor, Res_guide_mask1, SSIM_num)
+                    smooth_loss, smooth_loss_guide_mask = get_smooth_loss(norm_disp, color, self.start_smooth_guide,
+                                                                            enhan_factor, Res_guide_mask1, SSIM_num)
                 else:
-                    smooth_loss, Res_guide_mask1_mask = get_smooth_loss(norm_disp, color, self.opt.mask3_Threshold,
-                                                                        enhan_factor=enhan_factor,
-                                                                        Res_guide_mask1=Res_guide_mask1,
-                                                                        SSIM_num=SSIM_num)
+                    smooth_loss, Res_guide_mask1_mask = get_smooth_loss(norm_disp, color, enhan_factor=enhan_factor,
+                                                                        Res_guide_mask = Res_guide_mask1,
+                                                                        SSIM_num = SSIM_num)
             elif self.start_smooth_guide and (scale == 0 or scale == 1) and self.opt.is_use_guide_map:
-                SSIM_num = self.Conv(outputs["identity_selection/{}".format(scale)].unsqueeze(1))
-                enhan_factor = 0.2
-                inputs[("edge_mask", 0, 0)] = inputs[("edge_map", 0, 0)] + inputs[("edge_region", 0, 0)]
-                smooth_loss, smooth_loss_guide_mask_2 = get_smooth_loss(norm_disp, color, self.opt.mask3_Threshold, inputs[("edge_mask", 0, 0)],
-                                              self.start_smooth_guide, enhan_factor=enhan_factor, SSIM_num=SSIM_num)
+                smooth_loss, smooth_loss_guide_mask = get_smooth_loss(norm_disp, color, self.start_smooth_guide)
             else:
                 smooth_loss = get_smooth_loss(norm_disp, color)
             # smooth_loss = get_smooth_loss(norm_disp, color)
             loss += self.opt.disparity_smoothness * smooth_loss / (2 ** scale)
-            if self.opt.use_feature_guide_loss and self.epoch > 5 and scale == 0:
-                middle_Res_guide_mask = torch.zeros(self.opt.batch_size, 1, self.opt.height, self.opt.width, device=self.device)
-                middle_Res_guide_mask[:, :, 1:(self.opt.height - 1), 1:(self.opt.width - 1)] = Res_guide_mask1[:, :, 1:(self.opt.height - 1),
-                                      1:(self.opt.width - 1)]
-                feature_guide_loss = create_feature_guide_loss(middle_Res_guide_mask, outputs[("d_feature", 0)],
-                                                               norm_disp, inputs[("edge_map", 0, 0)])
-                feature_guide_loss = feature_guide_loss / (2 ** scale)
-            # Res_smooth_guide_L1loss = create_smooth_guide_L1loss(Res_guide_mask1, img, disp, enhan_factor,
-            #                                                      SSIM_num)
-            # if self.start_Res_smooth_guide:
-            #     # if scale == 0:
-            #     #     middle_guide_mask = self.Conv(Res_guide_mask1_mask)
-            #     #     middle_guide_mask = torch.where(middle_guide_mask > 0, 1, 0)
-            #     #     Res_guide_mask2 = 1 - (inputs[("edge_map", 0, 0)] * middle_guide_mask)
-            #     # to_optimise = (to_optimise * Res_guide_mask2 + (outputs[("L1loss_final", 0, scale)] * 0.3 / 0.15 + outputs[("SSIMloss_final", 0, scale)] * 0.7 / 0.85)
-            #     #                * (1 - Res_guide_mask2) * outputs["identity_selection/{}".format(scale)].unsqueeze(1))
-            #     Res_guide_mask2 = (1 - (Res_guide_mask1 + inputs[("edge_map", 0, 0)]))
-            #     to_optimise = (to_optimise * Res_guide_mask2 + (outputs[("L1loss_final", 0, scale)] + outputs[("SSIMloss_final", 0, scale)]) * 0.75
-            #                    * Res_guide_mask1 * outputs["identity_selection/{}".format(scale)].unsqueeze(1) +
-            #                    (outputs[("L1loss_final", 0, scale)] + outputs[("SSIMloss_final", 0, scale)] * 0.75)
-            #                    * inputs[("edge_map", 0, 0)] * outputs["identity_selection/{}".format(scale)].unsqueeze(1))
+
             if self.start_smooth_guide and self.opt.is_use_guide_map and (scale == 0 or scale == 1):
                 if scale != 0:
-                    smooth_loss_guide_mask_2 = F.interpolate(smooth_loss_guide_mask_2, [self.opt.height, self.opt.width],
+                    smooth_loss_guide_mask = F.interpolate(smooth_loss_guide_mask, [self.opt.height, self.opt.width],
                                                          mode="bilinear", align_corners=False)
                 if scale == 0:
                     new_mask = inputs[("edge_map", 0, 0)] + Res_guide_mask1
-                new_mask_middle = smooth_loss_guide_mask_2 * (1 - new_mask)
+                new_mask_middle = smooth_loss_guide_mask * (1 - new_mask)
                 new_mask_middle_mean = new_mask_middle.sum() / (1 - new_mask).sum()
                 smooth_loss_guide_mask_2 = new_mask_middle + new_mask * new_mask_middle_mean
                 to_optimise = to_optimise * smooth_loss_guide_mask_2
                 loss += (to_optimise.sum() / smooth_loss_guide_mask_2.sum())
             else:
-                if self.opt.use_pose_corre and self.epoch >= 5:
-                    # inputs[("dynamic_seg", 0, 0)]的尺寸为[B,H,W,1]
-                    inputs[("dynamic_seg", 0, 0)] = inputs[("dynamic_seg", 0, 0)].transpose(2,3).transpose(1,2)
-                    # inputs[("dynamic_seg", 0, 0)]的尺寸为12x1x192x640
-                    # to_optimise和to_optimise_pose_corre的尺寸为torch.Size([12, 1, 192, 640])
-                    to_optimise = (1 - inputs[("dynamic_seg", 0, 0)]) * to_optimise
-                    to_optimise = to_optimise.sum() / (1 - inputs[("dynamic_seg", 0, 0)]).sum()
-                    to_optimise_pose_corre = inputs[("dynamic_seg", 0, 0)] * to_optimise_pose_corre
-                    to_optimise_pose_corre = to_optimise_pose_corre.sum() / inputs[("dynamic_seg", 0, 0)].sum()
-                    loss += (to_optimise + to_optimise_pose_corre) / 2
-                else:
-                    loss += to_optimise.mean()
-                    if self.opt.use_pose_corre:
-                        loss += to_optimise_pose_corre.mean()
+                loss += to_optimise.mean()
 
             total_loss += loss
             losses["loss/{}".format(scale)] = loss
 
         total_loss /= self.num_scales
-        if self.opt.use_pose_corre and self.opt.use_pose_corre_loss:
-            total_loss = total_loss + pose_corre_factor_used_total_loss
-        if self.opt.use_feature_guide_loss and self.epoch > 5:
-            total_loss = total_loss + feature_guide_loss
         losses["loss"] = total_loss
         return losses
 

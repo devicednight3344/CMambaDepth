@@ -1,14 +1,11 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from timm.models.layers import DropPath
 import torch.utils.checkpoint as checkpoint
 from functools import partial
 from typing import Tuple
-import copy
-import numpy as np
 from timm.models.layers import DropPath, trunc_normal_
-from collections import OrderedDict
+
 class LKA(nn.Module):
     def __init__(self, dim):
         super().__init__()
@@ -461,8 +458,8 @@ class HAM(nn.Module):
 if __name__ == "__main__":
     Ret_depths=2
     device = torch.device("cuda")
-    a = HAM(72,4,Ret_depths)
-    a.to(device)
+    HAM_test = HAM(72,4,Ret_depths)
+    HAM_test.to(device)
     tensor = torch.randn(2,72,96,320).to(device)
-    out_tensor = a(tensor)
+    out_tensor = HAM_test(tensor)
     print(out_tensor.shape)

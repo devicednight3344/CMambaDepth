@@ -57,7 +57,6 @@ class Make3DDataset(data.Dataset):
         # Y坐标：网格点在三维空间中的Y位置。
         # Z坐标：网格点在三维空间中的Z位置（对应于深度或距离）。
         # 额外信息：最大有效深度，设置为80。
-        # 原文链接：https: // blog.csdn.net / m0_37605642 / article / details / 138495410
         inputs = {}
 
         img = raw_img.crop((0, 710, 1704, 1562))

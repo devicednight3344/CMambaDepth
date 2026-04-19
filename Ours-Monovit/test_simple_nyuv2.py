@@ -45,7 +45,7 @@ def parse_args():
                         action='store_true')
     parser.add_argument("--use_channel_mamba_2",
                         action='store_true')
-    parser.add_argument("--use_AdaRM",
+    parser.add_argument("--use_HAM",
                         action='store_true')
     return parser.parse_args()
 
@@ -96,7 +96,7 @@ def test_simple(args):
     print("   Loading pretrained decoder")
     depth_decoder = networks.DepthDecoder(use_channel_mamba=args.use_channel_mamba,
                                           use_channel_mamba_2=args.use_channel_mamba_2,
-                                          use_AdaRM=args.use_AdaRM)
+                                          use_HAM=args.use_HAM)
     depth_model_dict = depth_decoder.state_dict()
     depth_decoder.load_state_dict({k: v for k, v in decoder_dict.items() if k in depth_model_dict})
 
@@ -164,4 +164,4 @@ if __name__ == '__main__':
     args = parse_args()
     test_simple(args)
 
-# python test_simple_nyuv2.py --use_channel_mamba --use_channel_mamba_2 --use_AdaRM --load_weights_folder 余弦相似度测试图片/mytrain_20250512_use_guide_SAM_10_weights_16 --image_path D:\李伟师兄的资料\NYUv2_test\nyu_test\00001.h5
+# python test_simple_nyuv2.py --use_channel_mamba --use_channel_mamba_2 --use_HAM --load_weights_folder monovit --image_path D:\NYUv2_test\nyu_test\00001.h5

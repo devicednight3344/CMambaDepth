@@ -178,9 +178,7 @@ if __name__ == "__main__":
                         action="store_true")
     parser.add_argument("--use_channel_mamba_2",
                         action="store_true")
-    parser.add_argument("--use_AdaRM",
+    parser.add_argument("--use_HAM",
                         action="store_true")
     args = parser.parse_args()
     evaluate(args)
-
-# python nyuv2_eval_depth.py --data_path D:\李伟师兄的资料\NYUv2_test --load_weights_folder 余弦相似度测试图片/基线权重(mytrain_20240806_use_guide_SAM_117_weights_17)/weights_17

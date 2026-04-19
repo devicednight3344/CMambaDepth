@@ -45,7 +45,7 @@ def parse_args():
                         action='store_true')
     parser.add_argument("--use_channel_mamba_2",
                         action='store_true')
-    parser.add_argument("--use_AdaRM",
+    parser.add_argument("--use_HAM",
                         action='store_true')
     return parser.parse_args()
 
@@ -86,7 +86,7 @@ def test_simple(args):
     print("   Loading pretrained decoder")
     depth_decoder = networks.DepthDecoder(use_channel_mamba=args.use_channel_mamba,
                                           use_channel_mamba_2=args.use_channel_mamba_2,
-                                          use_AdaRM=args.use_AdaRM)
+                                          use_HAM=args.use_HAM)
     depth_model_dict = depth_decoder.state_dict()
     depth_decoder.load_state_dict({k: v for k, v in decoder_dict.items() if k in depth_model_dict})
 
@@ -188,5 +188,4 @@ if __name__ == '__main__':
     args = parse_args()
     test_simple(args)
 
-# python test_simple.py --load_weights_folder 余弦相似度测试图片/基线权重(mytrain_20240806_use_guide_SAM_117_weights_17)/weights_17 --image_path D:\BaiduNetdiskDownload\2011_09_29\2011_09_29_drive_0071_sync\image_02\data\0000000160.png
-# python test_simple.py --use_channel_mamba --use_channel_mamba_2 --use_AdaRM --load_weights_folder 余弦相似度测试图片/mytrain_20250512_use_guide_SAM_10_weights_16 --image_path D:\BaiduNetdiskDownload\2011_09_29\2011_09_29_drive_0071_sync\image_02\data\0000000160.png
+# python test_simple.py --use_channel_mamba --use_channel_mamba_2 --use_HAM --load_weights_folder monovit --image_path img\0000000002.png

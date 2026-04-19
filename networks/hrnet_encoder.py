@@ -16,29 +16,6 @@ model_urls = {
     'hrnet48_cityscapes': 'https://optgaw.dm.files.1drv.com/y4mWNpya38VArcDInoPaL7GfPMgcop92G6YRkabO1QTSWkCbo7djk8BFZ6LK_KHHIYE8wqeSAChU58NVFOZEvqFaoz392OgcyBrq_f8XGkusQep_oQsuQ7DPQCUrdLwyze_NlsyDGWot0L9agkQ-M_SfNr10ETlCF5R7BdKDZdupmcMXZc-IE3Ysw1bVHdOH4l-XEbEKFAi6ivPUbeqlYkRMQ',
 }
 
-# def visual_feature(features):
-#     for a in range(len(features)):
-#         feature_map = features[a].squeeze(0).cpu()
-#         n,h,w = feature_map.size()
-#         print("{} channel in stage {}".format(n,a))
-#         list_mean = []
-#         sum_feature_map = torch.sum(feature_map,0)
-#         #sum_feature_map,_ = torch.max(feature_map,0)
-#         for i in range(n):
-#             list_mean.append(torch.mean(feature_map[i]))
-#
-#         sum_mean = sum(list_mean)
-#         feature_map_weighted = torch.ones([n,h,w])
-#         for i in range(n):
-#             feature_map_weighted[i,:,:] = (torch.mean(feature_map[i]) / sum_mean) * feature_map[i,:,:]
-#         sum_feature_map_weighted = torch.sum(feature_map_weighted,0)
-#         plt.imshow(sum_feature_map,cmap= 'magma')
-#         plt.savefig('feature_viz/{}_stage.png'.format(a))
-#         #plt.savefig('feature_viz_ori/{}_stage.png'.format(a))
-#         plt.imshow(sum_feature_map_weighted,cmap = 'magma')
-#         plt.savefig('feature_viz/{}_stage_weighted.png'.format(a))
-#         #plt.savefig('feature_viz_ori/{}_stage_weighted.png'.format(a))
-
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
     """3x3 convolution with padding"""
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,

@@ -115,38 +115,6 @@ class ConvBlock(nn.Module):
         out = self.nonlin(out)
         return out
 
-class ConvBlockDepth(nn.Module):
-    """Layer to perform a convolution followed by ELU
-    """
-    def __init__(self, in_channels, out_channels):
-        super(ConvBlockDepth, self).__init__()
-
-        self.conv = DepthConv3x3(in_channels, out_channels)
-        self.nonlin = nn.GELU()
-
-    def forward(self, x):
-        out = self.conv(x)
-        out = self.nonlin(out)
-        return out
-
-
-class DepthConv3x3(nn.Module):
-    """Layer to pad and convolve input
-    """
-    def __init__(self, in_channels, out_channels, use_refl=True):
-        super(DepthConv3x3, self).__init__()
-
-        if use_refl:
-            self.pad = nn.ReflectionPad2d(1)
-        else:
-            self.pad = nn.ZeroPad2d(1)
-        # self.conv = nn.Conv2d(int(in_channels), int(out_channels), 3)
-        self.conv = nn.Conv2d(int(in_channels), int(out_channels), kernel_size=3, groups=int(out_channels), bias=False)
-
-    def forward(self, x):
-        out = self.pad(x)
-        out = self.conv(out)
-        return out
 
 class Conv3x3(nn.Module):
     """Layer to pad and convolve input
@@ -165,29 +133,6 @@ class Conv3x3(nn.Module):
         out = self.pad(x)
         out = self.conv(out)
         return out
-
-def to_optimise_max(matrix, top_factor=0.2):
-    # 获取每个 batch 上最后两个维度的大小
-    batch_size, _, height, width = matrix.shape
-
-    # 展平最后两个维度并计算每个 batch 的 top 20% 的数值索引
-    flattened = matrix.view(batch_size, -1)  # 变形为 (12, 192*640)
-
-    # 计算每个 batch 上前 20% 的元素数量
-    num_top = int(top_factor * flattened.size(1))
-
-    # 使用 topk 获取前 20% 数值的索引
-    top_k_values, top_k_indices = torch.topk(flattened, num_top, dim=1)
-    # top_k_indices的尺寸为12xnum_top
-    # 将一维的索引转换为二维坐标
-    # 计算行和列的坐标
-    rows = torch.div(top_k_indices, width, rounding_mode='trunc')  # 行坐标
-    cols = top_k_indices % width  # 列坐标
-
-    # 将结果存储为 (batch_size, num_top, 2) 的列表
-    top_k_coords = torch.stack((rows, cols), dim=-1)
-    # top_k_coords的尺寸为12x24576x2
-    return top_k_coords, top_k_indices
 
 class BackprojectDepth_corre(nn.Module):
     """Layer to transform a depth image into a point cloud
@@ -370,132 +315,28 @@ def upsample(x):
     """
     return F.interpolate(x, scale_factor=2, mode="nearest")
 
-def get_smooth_loss_guide_mask(disp, img, mask3_Threshold=None):
-    """Computes the smoothness loss for a disparity image
-    The color image is used for edge-aware smoothness
-    """
-    grad_disp_x = torch.abs(disp[:, :, :, :-1] - disp[:, :, :, 1:])
-    grad_disp_y = torch.abs(disp[:, :, :-1, :] - disp[:, :, 1:, :])
-
-    grad_img_x = torch.mean(torch.abs(img[:, :, :, :-1] - img[:, :, :, 1:]), 1, keepdim=True)
-    grad_img_y = torch.mean(torch.abs(img[:, :, :-1, :] - img[:, :, 1:, :]), 1, keepdim=True)
-
-    grad_disp_x *= torch.exp(-grad_img_x)
-    grad_disp_y *= torch.exp(-grad_img_y)
-    # grad_disp_x尺寸为torch.Size([12, 1, 192, 639])
-    # grad_disp_y尺寸为torch.Size([12, 1, 191, 640]
-    # Res_guide_mask1尺寸为12, 1, 192, 640
-    # 先计算平滑损失图
-    batch_size, _, height, width = disp.shape
-    device = torch.device("cuda")
-    middle_grad_disp = torch.zeros(batch_size, 1, height, width, device=device)
-    middle_grad_disp[:, :, 1:(height-1), 1:(width-1)] = grad_disp_x[:, :, 1:(height-1), 1:(width-1)]\
-                                                        + grad_disp_y[:, :, 1:(height-1), 1:(width-1)]
-    # middle_grad_disp = middle_grad_disp / torch.max(middle_grad_disp)
-    smooth_loss_guide_mask = torch.where(middle_grad_disp > mask3_Threshold, torch.tensor(1, device=device),
-                                         torch.tensor(0, device=device))
-    return smooth_loss_guide_mask
-def compute_affinity(feature, kernel_size):
-    # feature的尺寸为12x32x192x640
-    pad = kernel_size // 2
-    feature = F.normalize(feature, dim=1)
-    # feature的尺寸为12x32x192x640
-    unfolded = F.pad(feature, [pad] * 4).unfold(2, kernel_size, 1).unfold(3, kernel_size, 1)
-    # unfold(2, kernel_size, 1)：在高度维度 H进行滑动窗口操作，提取每个kernel_size的局部块。
-    # unfold(3, kernel_size, 1)：在宽度维度 W进行滑动窗口操作，
-    # 最终unfolded变成一个kernel_size × kernel_size的局部邻域张量
-    # unfolded的尺寸为torch.Size([1, 32, 192, 640, 3, 3])
-    feature = feature.unsqueeze(-1).unsqueeze(-1)
-    similarity = (feature * unfolded).sum(dim=1, keepdim=True)
-    # similarity的尺寸为torch.Size([12, 32, 192, 640, 3, 3])
-    # eps = torch.zeros(similarity.shape).to(similarity.device) + 1e-9
-    affinity = torch.clamp(2 - 2 * similarity, min=1e-9).sqrt()
-    # affinity的尺寸为torch.Size([12, 32, 192, 640, 3, 3])
-    return affinity
-def create_feature_guide_loss(smooth_loss_guide_mask, feature, disp, edge_map, kernel_size=3,
-                              enhan_factor=1, SSIM_enhan_factor=None):
+def create_smooth_guide_L1loss(Res_guide_mask, img, disp, enhan_factor=1, SSIM_enhan_factor=None):
     # disp的尺寸为torch.Size([12, 1, 192, 640])
-    # smooth_loss_guide_mask尺寸为torch.Size([12, 1, 192, 640])
-    # feature的尺寸为torch.Size([12, 32, 192, 640])
-    # SSIM_enhan_factor的尺寸为torch.Size([12, 1, 192, 640])
-    # edge_map尺寸为torch.Size([12, 1, 192, 640])
-    disp = disp.squeeze(1)
-    not_grad_disp = disp.detach()
-    smooth_loss_guide_mask = smooth_loss_guide_mask.squeeze(1)
-    SSIM_enhan_factor = SSIM_enhan_factor.squeeze(1)
-    batch_size, height, width = smooth_loss_guide_mask.shape
-    device = torch.device("cuda")
-    current_smooth_loss_guide_mask_indexs = torch.nonzero(smooth_loss_guide_mask)
-    # current_smooth_loss_guide_mask_indexs的尺寸为??x3
-    # SSIM_enhan_factor_values = SSIM_enhan_factor[current_smooth_loss_guide_mask_indexs[:, 0],
-    # current_smooth_loss_guide_mask_indexs[:, 1], current_smooth_loss_guide_mask_indexs[:, 2]]
-    # SSIM_enhan_factor_values的尺寸为torch.Size([???])
-    if current_smooth_loss_guide_mask_indexs.shape[0] == 0:
-        return 0
-    else:
-        center_xy = current_smooth_loss_guide_mask_indexs[:, 1:]
-        # center_xy的尺寸为torch.Size([11704, 2])
-        batch_indices_1 = current_smooth_loss_guide_mask_indexs[:, 0]
-        # batch_indices的尺寸为torch.Size([11704])
-        center_disp_value = disp[batch_indices_1, center_xy[:, 0], center_xy[:, 1]]
-        # center_disp_value的尺寸为torch.Size([11704])
-        feature = F.normalize(feature, dim=1)
-        center_feature_value = feature[batch_indices_1, :, center_xy[:, 0], center_xy[:, 1]]
-        # center_feature_value的尺寸为torch.Size([11704,32])
-        offsets = torch.tensor([[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1],
-                                [1, -1], [1, 0], [1, 1]], device=torch.device("cuda"))
-        # offsets = torch.tensor([[-1, 0], [0, -1], [0, 1], [1, 0]], device=torch.device("cuda"))
-        expanded_index_matrix = center_xy[:, None, :] + offsets
-        # expanded_index_matrix的尺寸为torch.Size([11704, 4, 2])
-        x_indices = expanded_index_matrix[..., 0]
-        y_indices = expanded_index_matrix[..., 1]
-        # x_indices的尺寸为torch.Size([11704, 4])
-        batch_indices_2 = batch_indices_1[:, None]
-        current_disp_value = not_grad_disp[batch_indices_2, x_indices, y_indices]
-        # current_disp_value的尺寸为torch.Size([11704, 4])
-        current_feature_value = feature[batch_indices_2, :, x_indices, y_indices]
-        # current_feature_value的尺寸为torch.Size([11704, 4, 32])
-        current_disp_value_min, min_dix = torch.min(current_disp_value, 1)
-        # current_disp_value_min和min_dix的尺寸为torch.Size([11704])
-        row_idx = torch.arange(current_feature_value.shape[0])
-        current_feature_value_min = current_feature_value[row_idx, min_dix]
-        # current_feature_value_min的尺寸为torch.Size([11704,32])
-        current_disp_value_min = current_disp_value_min.unsqueeze(1)
-        center_disp_value = center_disp_value.unsqueeze(1)
-        current_01_value = torch.where(current_disp_value_min < center_disp_value, torch.tensor(1, device=device),
-                                       torch.tensor(0, device=device))
-        # current_01_value的尺寸为torch.Size([11704, 1])
-        similarity = (center_feature_value * current_feature_value_min).sum(dim=1, keepdim=True)
-        # similarity的尺寸为torch.Size([11704, 1])
-        # eps = torch.zeros(similarity.shape).to(similarity.device) + 1e-9
-        affinity = torch.clamp(2 - 2 * similarity, min=1e-9).sqrt()
-        # affinity的尺寸为torch.Size([11704, 1])
-        affinity = affinity * current_01_value
-        loss = affinity
-        loss = loss.mean() * 0.1
-        return loss
-def create_smooth_guide_L1loss(smooth_loss_guide_mask, img, disp, enhan_factor=1, SSIM_enhan_factor=None):
-    # disp的尺寸为torch.Size([12, 1, 192, 640])
-    # smooth_loss_guide_mask尺寸为torch.Size([12, 1, 192, 640])
+    # Res_guide_mask尺寸为torch.Size([12, 1, 192, 640])
     # img的尺寸为torch.Size([12, 3, 192, 640])
     # SSIM_enhan_factor的尺寸为torch.Size([12, 1, 192, 640])
     disp = disp.squeeze(1)
     not_grad_disp = disp.detach()
-    smooth_loss_guide_mask = smooth_loss_guide_mask.squeeze(1)
+    Res_guide_mask = Res_guide_mask.squeeze(1)
     SSIM_enhan_factor = SSIM_enhan_factor.squeeze(1)
-    batch_size, height, width = smooth_loss_guide_mask.shape
+    batch_size, height, width = Res_guide_mask.shape
     device = torch.device("cuda")
-    current_smooth_loss_guide_mask_indexs = torch.nonzero(smooth_loss_guide_mask)
-    # current_smooth_loss_guide_mask_indexs的尺寸为??x3
-    SSIM_enhan_factor_values = SSIM_enhan_factor[current_smooth_loss_guide_mask_indexs[:, 0],
-    current_smooth_loss_guide_mask_indexs[:, 1], current_smooth_loss_guide_mask_indexs[:, 2]]
+    current_Res_guide_mask_indexs = torch.nonzero(Res_guide_mask)
+    # current_Res_guide_mask_indexs的尺寸为??x3
+    SSIM_enhan_factor_values = SSIM_enhan_factor[current_Res_guide_mask_indexs[:, 0],
+    current_Res_guide_mask_indexs[:, 1], current_Res_guide_mask_indexs[:, 2]]
     # SSIM_enhan_factor_values的尺寸为torch.Size([???])
-    if current_smooth_loss_guide_mask_indexs.shape[0] == 0:
+    if current_Res_guide_mask_indexs.shape[0] == 0:
         return 0
     else:
-        center_xy = current_smooth_loss_guide_mask_indexs[:, 1:]
+        center_xy = current_Res_guide_mask_indexs[:, 1:]
         # center_xy的尺寸为torch.Size([11704, 2])
-        batch_indices_1 = current_smooth_loss_guide_mask_indexs[:, 0]
+        batch_indices_1 = current_Res_guide_mask_indexs[:, 0]
         # batch_indices的尺寸为torch.Size([11704])
         center_disp_value = disp[batch_indices_1, center_xy[:, 0], center_xy[:, 1]]
         # center_disp_value的尺寸为torch.Size([11704])
@@ -527,14 +368,13 @@ def create_smooth_guide_L1loss(smooth_loss_guide_mask, img, disp, enhan_factor=1
         current_01_value_sum = torch.sum(current_01_value, 1).unsqueeze(1)
         final_value = current_01_value * grad_disp / (current_01_value_sum + 1e-7)
         # final_value = current_01_value * grad_disp
-        # SSIM_enhan_factor_values = SSIM_enhan_factor_values.unsqueeze(1)
-        # final_value = final_value * SSIM_enhan_factor_values
+        SSIM_enhan_factor_values = SSIM_enhan_factor_values.unsqueeze(1)
+        final_value = final_value * SSIM_enhan_factor_values
         l1_loss = final_value.sum()
         l1_loss = l1_loss / (batch_size * (height-1) * width) * enhan_factor
         return l1_loss
 
-def get_smooth_loss(disp, img, mask3_Threshold=None, edge_mask=None, start_smooth_guide=False, enhan_factor=1,
-                    Res_guide_mask1=None, SSIM_num=None):
+def get_smooth_loss(disp, img, start_smooth_guide=False, enhan_factor=1, Res_guide_mask=None, SSIM_num=None):
     """Computes the smoothness loss for a disparity image
     The color image is used for edge-aware smoothness
     """
@@ -554,116 +394,26 @@ def get_smooth_loss(disp, img, mask3_Threshold=None, edge_mask=None, start_smoot
         middle_grad_disp[:, :, 1:(height-1), 1:(width-1)] = grad_disp_x[:, :, 1:(height-1), 1:(width-1)]\
                                                             + grad_disp_y[:, :, 1:(height-1), 1:(width-1)]
         middle_grad_disp = middle_grad_disp.detach()
-        # middle_grad_disp = middle_grad_disp / torch.max(middle_grad_disp)
-        # save_image(middle_grad_disp, "D:\pycharm_file\MonoViT-main\middle_grad_disp.png")
-        smooth_loss_guide_mask = torch.where(middle_grad_disp > mask3_Threshold, torch.tensor(1, device=device),
-                                             torch.tensor(0, device=device))
-        # smooth_loss_guide_mask_2 = 1 - (middle_grad_disp / torch.max(torch.max(middle_grad_disp, 3, keepdim=True)[0], 2, keepdim=True)[0])
-        # smooth_loss_guide_mask_2 = 1 - torch.clip(middle_grad_disp, min=0.0, max=0.15)
-        smooth_loss_guide_mask_2 = torch.exp(middle_grad_disp * (-0.75))
-        middle_smooth_loss_guide_mask = torch.ones_like(smooth_loss_guide_mask)
-        smooth_loss_guide_mask_2 =  smooth_loss_guide_mask * smooth_loss_guide_mask_2 + (1 - smooth_loss_guide_mask) * middle_smooth_loss_guide_mask
-        # edge_mask和smooth_loss_guide_mask的尺寸都为torch.Size([2, 1, 192, 640])
-        # save_image(smooth_loss_guide_mask.to(torch.float64), "D:\pycharm_file\MonoViT-main\smooth_loss_guide_mask_1.png")
-        # if Res_guide_mask1 != None:
-        #     # save_image(Res_guide_mask1.to(torch.float64), "D:\pycharm_file\MonoViT-main\Res_guide_mask1.png")
-        #     # Res_guide_mask1_mask = smooth_loss_guide_mask * Res_guide_mask1
-        #     # middle_Res_guide_mask = torch.zeros(batch_size, 1, height, width, device=device)
-        #     # middle_Res_guide_mask[:, :, 1:(height - 1), 1:(width - 1)] = Res_guide_mask1_mask[:, :, 1:(height - 1),
-        #     #                                                              1:(width - 1)]
-        #     # save_image(middle_Res_guide_mask.to(torch.float64), "D:\pycharm_file\MonoViT-main\middle_Res_guide_mask.png")
-        #     Res_smooth_guide_L1loss = create_smooth_guide_L1loss(Res_guide_mask1, img, disp, enhan_factor,
-        #                                                          SSIM_num)
-        # # print(smooth_loss_guide_mask[:,:,120:136,130:136])
-        # smooth_loss_guide_mask = smooth_loss_guide_mask * (1 - edge_mask)
-        # # smooth_loss_guide_mask尺寸为torch.Size([12, 1, 192, 640])
-        # # save_image(edge_mask, "D:\pycharm_file\MonoViT-main\edge_mask.png")
-        # # save_image(smooth_loss_guide_mask, "D:\pycharm_file\MonoViT-main\smooth_loss_guide_mask_2.png")
-        # smooth_guide_L1loss = create_smooth_guide_L1loss(smooth_loss_guide_mask, img, disp, enhan_factor,
-        #                                                  SSIM_num)
-        # if Res_guide_mask1 != None:
-        #     return grad_disp_x.mean() + grad_disp_y.mean() + Res_smooth_guide_L1loss + smooth_guide_L1loss, Res_guide_mask1_mask
-        # else:
-        #     return grad_disp_x.mean() + grad_disp_y.mean() + smooth_guide_L1loss
-        if Res_guide_mask1 != None:
-            return grad_disp_x.mean() + grad_disp_y.mean(), smooth_loss_guide_mask_2
+        smooth_loss_guide_mask = torch.exp(middle_grad_disp * (-0.75))
+        if Res_guide_mask != None:
+            middle_Res_guide_mask = torch.zeros(batch_size, 1, height, width, device=device)
+            middle_Res_guide_mask[:, :, 1:(height - 1), 1:(width - 1)] = Res_guide_mask[:, :, 1:(height - 1),
+                                                                         1:(width - 1)]
+            Res_smooth_guide_L1loss = create_smooth_guide_L1loss(middle_Res_guide_mask, img, disp, enhan_factor, SSIM_num)
+            return grad_disp_x.mean() + grad_disp_y.mean() + Res_smooth_guide_L1loss, smooth_loss_guide_mask
         else:
-            return grad_disp_x.mean() + grad_disp_y.mean(), smooth_loss_guide_mask_2
-    elif Res_guide_mask1 != None:
+            return grad_disp_x.mean() + grad_disp_y.mean(), smooth_loss_guide_mask
+    elif Res_guide_mask != None:
         batch_size, _, height, width = disp.shape
         device = torch.device("cuda")
-        smooth_loss_guide_mask = get_smooth_loss_guide_mask(disp, img, mask3_Threshold)
-        Res_guide_mask1_mask = smooth_loss_guide_mask * Res_guide_mask1
         middle_Res_guide_mask = torch.zeros(batch_size, 1, height, width, device=device)
-        middle_Res_guide_mask[:, :, 1:(height - 1), 1:(width - 1)] = Res_guide_mask1_mask[:, :, 1:(height - 1),
+        middle_Res_guide_mask[:, :, 1:(height - 1), 1:(width - 1)] = Res_guide_mask[:, :, 1:(height - 1),
                                                                      1:(width - 1)]
-        # Res_smooth_guide_L1loss = create_smooth_guide_L1loss(Res_guide_mask1, img, disp, enhan_factor,
-        #                                                      SSIM_num)
-        return grad_disp_x.mean() + grad_disp_y.mean(), Res_guide_mask1_mask
+        Res_smooth_guide_L1loss = create_smooth_guide_L1loss(middle_Res_guide_mask, img, disp, enhan_factor, SSIM_num)
+        return grad_disp_x.mean() + grad_disp_y.mean() + Res_smooth_guide_L1loss, Res_smooth_guide_L1loss
     else:
         return grad_disp_x.mean() + grad_disp_y.mean()
 
-# def get_smooth_loss(disp, img, mask3_Threshold=None, edge_mask=None, start_smooth_guide=False, enhan_factor=1,
-#                     Res_guide_mask1=None):
-#     """Computes the smoothness loss for a disparity image
-#     The color image is used for edge-aware smoothness
-#     """
-#     grad_disp_x = torch.abs(disp[:, :, :, :-1] - disp[:, :, :, 1:])
-#     grad_disp_y = torch.abs(disp[:, :, :-1, :] - disp[:, :, 1:, :])
-#
-#     grad_img_x = torch.mean(torch.abs(img[:, :, :, :-1] - img[:, :, :, 1:]), 1, keepdim=True)
-#     grad_img_y = torch.mean(torch.abs(img[:, :, :-1, :] - img[:, :, 1:, :]), 1, keepdim=True)
-#
-#     grad_disp_x *= torch.exp(-grad_img_x)
-#     grad_disp_y *= torch.exp(-grad_img_y)
-#     if start_smooth_guide:
-#         # grad_disp_x尺寸为torch.Size([12, 1, 192, 639])
-#         # grad_disp_y尺寸为torch.Size([12, 1, 191, 640]
-#         # Res_guide_mask1尺寸为12, 1, 192, 640
-#         # 先计算平滑损失图
-#         batch_size, _, height, width = disp.shape
-#         device = torch.device("cuda")
-#         middle_grad_disp = torch.zeros(batch_size, 1, height, width, device=device)
-#         middle_grad_disp[:, :, 1:(height-1), 1:(width-1)] = grad_disp_x[:, :, 1:(height-1), 1:(width-1)]\
-#                                                             + grad_disp_y[:, :, 1:(height-1), 1:(width-1)]
-#         middle_grad_disp = middle_grad_disp / torch.max(middle_grad_disp)
-#         smooth_loss_guide_mask = torch.where(middle_grad_disp > mask3_Threshold, torch.tensor(1, device=device),
-#                                              torch.tensor(0, device=device))
-#         # edge_mask和smooth_loss_guide_mask的尺寸都为torch.Size([2, 1, 192, 640])
-#         # Save_picture_path = "D:\pycharm_file\Lite-Mono-main\smooth_loss_guide_mask_test.png"
-#         # save_image(smooth_loss_guide_mask.to(torch.float64), Save_picture_path)
-#         smooth_loss_guide_mask = smooth_loss_guide_mask * (1 - edge_mask)
-#         # smooth_loss_guide_mask尺寸为torch.Size([12, 1, 192, 640])
-#         # Save_picture_path = "D:\pycharm_file\Lite-Mono-main\edge_mask_test.png"
-#         # save_image(edge_mask, Save_picture_path)
-#         # cv2.waitKey(100000)
-#         if Res_guide_mask1 != None:
-#             middle_Res_guide_mask = torch.zeros(batch_size, 1, height, width, device=device)
-#             middle_Res_guide_mask[:, :, 1:(height - 1), 1:(width - 1)] = Res_guide_mask1[:, :, 1:(height - 1),
-#                                                                          1:(width - 1)]
-#             # final_smooth_loss_guide_mask = (1 - smooth_loss_guide_mask) * middle_Res_guide_mask + smooth_loss_guide_mask
-#             # Res_smooth_guide_L1loss = create_smooth_guide_L1loss(final_smooth_loss_guide_mask, img, disp,
-#             #                                                      enhan_factor)
-#             Res_smooth_guide_L1loss = create_smooth_guide_L1loss(middle_Res_guide_mask, img, disp, enhan_factor)
-#         # else:
-#         #     final_smooth_loss_guide_mask = smooth_loss_guide_mask
-#         # smooth_guide_L1loss = create_smooth_guide_L1loss(final_smooth_loss_guide_mask, img, disp,
-#         #                                                  middle_enhan_factor_matrix)
-#         smooth_guide_L1loss = create_smooth_guide_L1loss(smooth_loss_guide_mask, img, disp, enhan_factor)
-#         if Res_guide_mask1 != None:
-#             return grad_disp_x.mean() + grad_disp_y.mean() + Res_smooth_guide_L1loss + smooth_guide_L1loss
-#         else:
-#             return grad_disp_x.mean() + grad_disp_y.mean() + smooth_guide_L1loss
-#     elif Res_guide_mask1 != None:
-#         batch_size, _, height, width = disp.shape
-#         device = torch.device("cuda")
-#         middle_Res_guide_mask = torch.zeros(batch_size, 1, height, width, device=device)
-#         middle_Res_guide_mask[:, :, 1:(height - 1), 1:(width - 1)] = Res_guide_mask1[:, :, 1:(height - 1), 1:(width - 1)]
-#         # smooth_guide_L1loss = create_smooth_guide_L1loss(middle_Res_guide_mask, img, disp)
-#         Res_smooth_guide_L1loss = create_smooth_guide_L1loss(middle_Res_guide_mask, img, disp, enhan_factor)
-#         return grad_disp_x.mean() + grad_disp_y.mean() + Res_smooth_guide_L1loss
-#     else:
-#         return grad_disp_x.mean() + grad_disp_y.mean()
 
 class SSIM(nn.Module):
     """Layer to compute the SSIM loss between a pair of images

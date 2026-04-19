@@ -14,8 +14,8 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torchvision.utils
 from torch.utils.data import DataLoader
-from tensorboardX import SummaryWriter
-# from torch.utils.tensorboard import SummaryWriter
+# from tensorboardX import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 
 import json
 
@@ -25,8 +25,6 @@ from layers import *
 
 import datasets
 import networks
-from IPython import embed
-
 
 class Trainer:
     def __init__(self, options):
@@ -41,11 +39,6 @@ class Trainer:
         self.parameters_to_train = []
 
         self.device = torch.device("cpu" if self.opt.no_cuda else "cuda")
-
-        self.Conv = nn.Conv2d(1, 1, 3, padding=1, bias=False)
-        self.Conv.weight = torch.nn.Parameter(torch.tensor([[[[1, 1, 1], [1, 1, 1], [1, 1, 1]]]], dtype=torch.float32))
-        self.Conv.weight.requires_grad = False
-        self.Conv.to(self.device)
 
         self.num_scales = len(self.opt.scales)
         self.num_input_frames = len(self.opt.frame_ids)
@@ -62,8 +55,6 @@ class Trainer:
         self.models["encoder"].to(self.device)
         self.parameters_to_train += list(self.models["encoder"].parameters())
 
-        # self.models["mamba_depth"] = networks.DepthDecoder_MSF(
-        #     self.models["encoder"].num_ch_enc, self.opt.scales)
         self.models["mamba_depth"] = networks.DepthDecoder_MSF(
             self.models["encoder"].num_ch_enc, self.opt.scales, use_channel_mamba=self.opt.use_channel_mamba,
             use_channel_mamba_2=self.opt.use_channel_mamba_2,use_HAM=self.opt.use_HAM, dataset=self.opt.dataset)
@@ -228,9 +219,6 @@ class Trainer:
         """
         self.epoch = 0
         self.step = 0
-        self.start_guide = False
-        self.start_smooth_guide = False
-        self.start_Res_smooth_guide = False
         self.start_time = time.time()
         for self.epoch in range(self.opt.num_epochs):
             self.run_epoch()
@@ -299,8 +287,7 @@ class Trainer:
             if self.opt.use_channel_mamba:
                 outputs["out_HiS"] = self.models["mamba_depth"](features_HiS, False, False, False)
             else:
-                outputs["out_HiS"] = self.models["mamba_depth"](features_HiS, False,
-                                                                False, False)
+                outputs["out_HiS"] = self.models["mamba_depth"](features_HiS, False, False, False)
             # Otherwise, we only feed the image with frame_id 0 through the depth encoder
             features_MiS = self.models["encoder"](inputs["color_MiS_aug", 0, 0])
             if self.opt.use_channel_mamba:
@@ -312,11 +299,9 @@ class Trainer:
             # Otherwise, we only feed the image with frame_id 0 through the depth encoder
             features_LoS = self.models["encoder"](inputs["color_LoS", 0, 0])
             if self.opt.use_channel_mamba:
-                outputs["out_LoS"] = self.models["mamba_depth"](features_LoS, False,
-                                                                False, False)
+                outputs["out_LoS"] = self.models["mamba_depth"](features_LoS, False, False, False)
             else:
-                outputs["out_LoS"] = self.models["mamba_depth"](features_LoS, False,
-                                                                False, False)
+                outputs["out_LoS"] = self.models["mamba_depth"](features_LoS, False, False, False)
 
         if self.opt.predictive_mask:
             outputs["predictive_mask"] = self.models["predictive_mask"](features_MiS)
@@ -505,14 +490,6 @@ class Trainer:
 
         return reprojection_loss
 
-    def compute_sd_loss(self, pred, target):
-        """Computes reprojection loss between a batch of predicted and target images
-                """
-        abs_diff = torch.abs(target - pred)
-        l1_loss = abs_diff.mean(1, True)
-
-        return l1_loss
-
     def compute_losses(self, inputs, outputs):
         """Compute the reprojection and smoothness losses for a minibatch
         """
@@ -523,8 +500,6 @@ class Trainer:
         loss_LoS = 0
         loss_consis_HiS = 0
         loss_consis_LoS = 0
-        # if self.opt.use_out_feature:
-        loss_sd = 0
         for scale in self.opt.scales:
             reprojection_losses_HiS = []
             reprojection_losses_MiS = []
@@ -732,7 +707,7 @@ class Trainer:
         for i, metric in enumerate(self.depth_metric_names):
             losses[metric] = np.array(depth_errors[i].cpu())
 
-    def log_time(self, batch_idx, duration, lH, lM, lL, cH, cL, sd, loss):
+    def log_time(self, batch_idx, duration, lH, lM, lL, cH, cL, loss):
         """Print a logging statement to the terminal
         """
         samples_per_sec = self.opt.batch_size / duration
@@ -740,8 +715,8 @@ class Trainer:
         training_time_left = (
             self.num_total_steps / self.step - 1.0) * time_sofar if self.step > 0 else 0
         print_string = "epoch {:>3} | batch {:>6} | ex/s: {:5.1f}" + \
-            " | lH: {:.4f} | lM: {:.4f} | lL: {:.4f} | cH: {:.10f} | cL: {:.10f} | sd: {:.10f} | loss: {:.5f} | te: {} | tl: {} | lr: {}"
-        print(print_string.format(self.epoch, batch_idx, samples_per_sec, lH, lM, lL, cH, cL, sd, loss,
+            " | lH: {:.4f} | lM: {:.4f} | lL: {:.4f} | cH: {:.10f} | cL: {:.10f} | loss: {:.5f} | te: {} | tl: {} | lr: {}"
+        print(print_string.format(self.epoch, batch_idx, samples_per_sec, lH, lM, lL, cH, cL, loss,
                                   sec_to_hm_str(time_sofar), sec_to_hm_str(training_time_left), self.model_optimizer.state_dict()['param_groups'][0]['lr']))
 
     def log(self, mode, inputs, outputs, losses):
@@ -752,27 +727,28 @@ class Trainer:
             writer.add_scalar("{}".format(l), v, self.step)
 
         for j in range(min(4, self.opt.batch_size)):  # write a maxmimum of four images
-            for s in self.opt.scales:
-                for frame_id in self.opt.frame_ids:
+            for s in self.opt.scales:  # 0
+                for frame_id in self.opt.frame_ids:  # [0, -1, 1]
                     writer.add_image(
                         "color_{}_{}/{}".format(frame_id, s, j),
-                        inputs[("color", frame_id, s)][j].data, self.step)
+                        inputs[("color_MiS", frame_id, s)][j].data, self.step)
                     if s == 0 and frame_id != 0:
                         writer.add_image(
                             "color_pred_{}_{}/{}".format(frame_id, s, j),
-                            outputs[("color", frame_id, s)][j].data, self.step)
+                            outputs[("color_MiS", frame_id, s)][j].data, self.step)
 
                 writer.add_image(
                     "disp_{}/{}".format(s, j),
-                    normalize_image(outputs[("disp", s)][j]), self.step)
+                    normalize_image(outputs["out_MiS"][("disp", s)][j]), self.step)
 
+                # not do
                 if self.opt.predictive_mask:
                     for f_idx, frame_id in enumerate(self.opt.frame_ids[1:]):
                         writer.add_image(
                             "predictive_mask_{}_{}/{}".format(frame_id, s, j),
-                            outputs["predictive_mask"][("disp", s)][j, f_idx][None, ...],
+                            outputs["out_MiS"]["predictive_mask"][("disp", s)][j, f_idx][None, ...],
                             self.step)
-
+                # do this
                 elif not self.opt.disable_automasking:
                     writer.add_image(
                         "automask_{}/{}".format(s, j),
@@ -832,9 +808,9 @@ class Trainer:
         if os.path.isfile(optimizer_load_path):
             print("Loading Adam weights")
             optimizer_dict = torch.load(optimizer_load_path)
-            # optimizer_dict['param_groups'][0]['lr'] = 1e-05
-            # optimizer_dict['param_groups'][1]['lr'] = 5e-05
-            # optimizer_dict['param_groups'][2]['lr'] = 5e-05
+            # optimizer_dict['param_groups'][0]['lr'] = xxx
+            # optimizer_dict['param_groups'][1]['lr'] = xxx
+            # optimizer_dict['param_groups'][2]['lr'] = xxx
             self.model_optimizer.load_state_dict(optimizer_dict)
             # print(self.model_optimizer.state_dict()['param_groups'][0]['lr'])
             # print(self.model_optimizer.state_dict()['param_groups'][1]['lr'])

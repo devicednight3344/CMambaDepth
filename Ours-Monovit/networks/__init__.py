@@ -4,6 +4,4 @@ from .pose_cnn import PoseCNN
 from .hr_decoder import DepthDecoder
 from .hr_layers import Attention_Module
 from .mpvit import *
-from .nets import DeepNet
-from .pos_encoding import PositionalEncoding
-from .AdaRM import AdaRM
+from .HAM import HAM

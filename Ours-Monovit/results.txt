@@ -1,0 +1,4 @@
+
+ model_name: D:\题目资料\单目2024\小论文\权重\mytrain_20250512_use_guide_SAM_10_weights_16 
+  abs_rel |   sq_rel |     rmse | rmse_log |       a1 |       a2 |       a3 | 
+ &   0.096  &   0.675  &   4.341  &   0.173  &   0.902  &   0.967  &   0.984  \\

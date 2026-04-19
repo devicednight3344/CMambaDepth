@@ -7,10 +7,6 @@
 #depth_decoder
 from __future__ import absolute_import, division, print_function
 
-import numpy as np
-import torch
-import torch.nn as nn
-
 from collections import OrderedDict
 from layers import *
 from networks.HAM import HAM
@@ -23,14 +19,13 @@ class DepthDecoder_MSF(nn.Module):
         self.num_output_channels = num_output_channels
         self.scales = scales
 
-        self.num_ch_enc = num_ch_enc        #features in encoder, [64, 18, 36, 72, 144]
+        self.num_ch_enc = num_ch_enc
         self.use_channel_mamba = use_channel_mamba
         self.use_channel_mamba_2 = use_channel_mamba_2
         # decoder
         self.convs = OrderedDict()
         self.use_HAM = use_HAM
         if self.use_channel_mamba_2:
-            # my_train_2025_0301
             input_channels = num_ch_enc
             hide_channel = 20
             hide_channels = [4, 4, 4, 4, 4]
@@ -92,7 +87,7 @@ class DepthDecoder_MSF(nn.Module):
         self.convs[("parallel_conv"), 5, 0] = ConvBlock(32, 16)
         self.convs[("dispconv", 0)] = Conv3x3(16, self.num_output_channels)
         if use_HAM:
-            in_channels = [18, 36, 72, 18, 36, 18, 32]  # [18, 36, 72, 18, 36, 18, 64]
+            in_channels = [18, 36, 72, 18, 36, 18, 32]
             num_heads = [1, 2, 4, 1, 2, 1, 2]
             Ret_depths = [2, 3, 4, 2, 2, 2, 1]
             self.convs["AdaRM_d0_1"] = HAM(in_channels[0], num_heads[0],Ret_depths[0], index="d0_1")
@@ -104,14 +99,12 @@ class DepthDecoder_MSF(nn.Module):
             self.convs["AdaRM_d3_1"] = HAM(in_channels[6], num_heads[6], Ret_depths[6], index="d3_1")
         # Mamba层
         if self.use_channel_mamba:
-            # my_train_2025_0301
-            in_channel = [72, 108, 144, 54, 72, 36, 128]# [18, 36, 72, 18, 36, 18, 64]
+            in_channel = [72, 108, 144, 54, 72, 36, 128]
             hide_channel = [36, 27, 24, 27, 18, 18, 24]
             channel_mamba_d_model = [9, 9, 8, 5, 4, 5, 8]
             channel_mamba_sqe = [4, 3, 2, 3, 2, 2, 2]
             linear_in_channel = [18, 24, 18, 12, 12, 6, 12]
             out_channels = [[9, 9, 9], [18, 18], [72], [9, 9], [36], [18], [64]]
-            # channel_mamba_pacth_size = [None, None, 2, 2]
             self.expanded_ratio = [3, 2, 1, 2, 1, 1, 1]
             self.out_mamba_sqe_num = [3, 2, 1, 2, 1, 1, 1]
             d_model_origin = [18, 36, 72, 18, 36, 18, 64]
@@ -166,7 +159,6 @@ class DepthDecoder_MSF(nn.Module):
 
     def forward(self, input_features, use_channel_mamba, use_channel_mamba_2, use_HAM):
         self.outputs = {}
-        # features in encoder
         if use_channel_mamba_2:
             output_features = self.convs["f_channel_mamba"](input_features)
             e4 = output_features[4]
@@ -205,7 +197,6 @@ class DepthDecoder_MSF(nn.Module):
             d0_2_msf = d0_2 + d0_3_2 + d0_4_2  # 通道数为36
             d0_3_msf = d0_3 + d0_4_3  # 通道数为72
         else:
-            # mytrain_2025_0301
             middle_features_map = torch.cat([d0_3_1, d0_2_1, d0_1], 1)  # 12x72x48x160
             d0_1_msf = self.convs["mamba_d0_1_msf"](middle_features_map, d0_4_1, [d0_3_1, d0_2_1, d0_1],
                                                     self.expanded_ratio[0],
@@ -241,7 +232,6 @@ class DepthDecoder_MSF(nn.Module):
             d1_1_msf = d1_1 + d1_2_1 + d1_3_1  # 通道数为18
             d1_2_msf = d1_2 + d1_3_2  # 通道数为36
         else:
-            # mytrain_2025_0301
             middle_features_map = torch.cat([d1_2_1, d1_1], 1)  # 12x54x48x160
             d1_1_msf = self.convs["mamba_d1_1_msf"](middle_features_map, d1_3_1, [d1_2_1, d1_1], self.expanded_ratio[3],
                                                     self.out_sqe_num[3])
@@ -264,7 +254,6 @@ class DepthDecoder_MSF(nn.Module):
         if not use_channel_mamba:
             d2_1_msf = d2_1 + d2_2_1  # 通道数为18
         else:
-            # mytrain_2025_0301
             d2_1_msf = self.convs["mamba_d2_1_msf"](d2_1, d2_2_1, [d2_1], self.expanded_ratio[5],
                                                   self.out_sqe_num[5])
         if not use_channel_mamba:
@@ -297,4 +286,4 @@ class DepthDecoder_MSF(nn.Module):
         d5 = self.convs[("parallel_conv"), 5, 0](d4_0)
         self.outputs[("disp", 0)] = self.sigmoid(self.convs[("dispconv", 0)](d5))
 
-        return self.outputs  # single-scale depth
+        return self.outputs

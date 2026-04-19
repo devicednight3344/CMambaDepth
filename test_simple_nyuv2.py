@@ -85,12 +85,10 @@ def test_simple(args):
 
     encoder_dict = torch.load(encoder_path)
     encoder = networks.hrnet18(False)
-    # encoder = networks.hrnet18_liwei(False)
     depth_decoder = networks.DepthDecoder_MSF(encoder.num_ch_enc, [0], num_output_channels=1,
                                               use_channel_mamba=args.use_channel_mamba,
                                               use_channel_mamba_2=args.use_channel_mamba_2,
                                               use_HAM=args.use_HAM, dataset=args.dataset)
-    # depth_decoder = networks.DepthDecoder_MSF_liwei(encoder.num_ch_enc, [0], num_output_channels=1)
     model_dict = encoder.state_dict()
     encoder.load_state_dict({k: v for k, v in encoder_dict.items() if k in model_dict})
     depth_decoder.load_state_dict(torch.load(decoder_path))
@@ -165,4 +163,5 @@ def test_simple(args):
 if __name__ == '__main__':
     args = parse_args()
     test_simple(args)
-# python test_simple_nyuv2.py --use_channel_mamba --use_channel_mamba_2 --use_HAM --load_weights_folder models/mytrain_2025_0320_4_438274337_weights_0/weights_0 --image_path D:\NYUv2_test\nyu_test\00001.h5
+
+# python test_simple_nyuv2.py --use_channel_mamba --use_channel_mamba_2 --use_HAM --load_weights_folder models/CMambaDepth --image_path D:\NYUv2_test\nyu_test\00001.h5

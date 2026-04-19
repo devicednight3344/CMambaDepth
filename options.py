@@ -214,7 +214,6 @@ class MonodepthOptions:
         return self.options
 
 
-#CUDA_VISIBLE_DEVICES=0 python train.py --model_name RA-Depth --scales 0 --png --log_dir models --data_path /test/datasets/Kitti/Kitti_raw_data
 
 
 

@@ -25,8 +25,6 @@ splits_dir = os.path.join(os.path.dirname(__file__), "splits")
 # to convert our stereo predictions to real-world scale we multiply our depths by 5.4.
 STEREO_SCALE_FACTOR = 5.4
 
-#CUDA_VISIBLE_DEVICES=0 python evaluate_depth.py --load_weights_folder /models/RA-Depth/ --eval_mono --height 192 --width 640 --scales 0 --data_path /datasets/Kitti/Kitti_raw_data --png
-
 def compute_errors(gt, pred):
     """Computation of error metrics between predicted and ground truth depths
     """
@@ -93,12 +91,8 @@ def evaluate(opt):
         dataloader = DataLoader(dataset, 16, shuffle=False, num_workers=opt.num_workers,
                                 pin_memory=True, drop_last=False)
 
-        # encoder = networks.ResnetEncoder(opt.num_layers, False)
         encoder = networks.hrnet18(False)
         if opt.use_channel_mamba:
-            # depth_decoder = networks.Mamba_DepthDecoder(
-            #     encoder.num_ch_enc, [0], use_channel_mamba=opt.use_channel_mamba,
-            #     use_channel_mamba_2=opt.use_channel_mamba_2)
             depth_decoder = networks.DepthDecoder_MSF(
                 encoder.num_ch_enc, [0], use_channel_mamba=opt.use_channel_mamba,
                 use_channel_mamba_2=opt.use_channel_mamba_2, use_HAM=opt.use_HAM)
@@ -261,4 +255,4 @@ if __name__ == "__main__":
     options = MonodepthOptions()
     evaluate(options.parse())
 
-# CUDA_VISIBLE_DEVICES=0 python evaluate_depth.py --eval_mono --height 192 --width 640 --scales 0 --data_path /media/a/b81bd773-44f1-4674-846e-436d8b829731/KITTI_raw_data --png --use_channel_mamba --use_channel_mamba_2 --use_HAM --load_weights_folder /home/a/EXP/HYQ/RA-Depth-main/models/my_train_2025_0403_2/models/weights_7
+# CUDA_VISIBLE_DEVICES=0 python evaluate_depth.py --eval_mono --height 192 --width 640 --scales 0 --data_path /media/a/b81bd773-44f1-4674-846e-436d8b829731/KITTI_raw_data --png --use_channel_mamba --use_channel_mamba_2 --use_HAM --load_weights_folder models/CMambaDepth

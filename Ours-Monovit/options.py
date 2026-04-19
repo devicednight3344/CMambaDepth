@@ -202,69 +202,26 @@ class MonodepthOptions:
                                  help="if set will perform the flipping post processing "
                                       "from the original monodepth paper",
                                  action="store_true")
-        self.parser.add_argument("--is_ext_guide_map",
-                                 help="if exist guide map already, doesn't set, remain default",
+        #######################
+        self.parser.add_argument("--is_use_guide_map",
                                  action="store_true")
-        self.parser.add_argument("--guide_map_iter_num",
-                                 type=int,
-                                 default=100)
-        self.parser.add_argument("--edge_Threshold",
-                                 help="in the guide map, positions larger than this value will be treated as"
-                                      "boundary regions",
-                                 type=float,
-                                 default=0.70)
-        self.parser.add_argument("--mask1_Threshold",
-                                 help="This threshold was used to remove pixels with insignificant pixel value"
-                                      "changes in the RGB image",
-                                 type=float,
-                                 default=0)
-        self.parser.add_argument("--mask2_Threshold",
-                                 help="This threshold is used to mitigate the effects of inconsistencies between"
-                                      "the target view and the source view boundaries",
-                                 type=float,
-                                 default=0.37)
-        self.parser.add_argument("--mask3_Threshold",
-                                 help="This threshold is used to determine, how much the smoothness loss is greater"
-                                      "than when using the smoothing loss guide map",
-                                 type=float,
-                                 default=0.05)
-        self.parser.add_argument("--afa",
-                                 type=float,
-                                 default=0.15)
         self.parser.add_argument("--guide_num_epochs",
-                                 help="How many epochs later start using the guide loss",
                                  type=int,
-                                 default=0)
+                                 default=21)
         self.parser.add_argument("--L1_guide_num_epochs",
-                                 help="How many epochs later start using the guide loss",
                                  type=int,
-                                 default=31)
+                                 default=21)
         self.parser.add_argument("--smooth_guide_num_epochs",
-                                 help="How many epochs later start using the guide loss",
                                  type=int,
-                                 default=5)
+                                 default=21)
         self.parser.add_argument("--Res_smooth_guide_num_epochs",
                                  type=int,
                                  default=0)
-        self.parser.add_argument("--use_pos_encording",
-                                 help="if doesn't set, doesn't use guidable photometric reprojectionloss",
-                                 action="store_true")
-        self.parser.add_argument("--use_pyramid",
-                                 action="store_true")
-        self.parser.add_argument("--is_use_guide_map",
-                                 help="if doesn't set, doesn't use guidable photometric reprojectionloss",
-                                 action="store_true")
-        self.parser.add_argument("--use_pose_corre",
-                                 action="store_true")
-        self.parser.add_argument("--use_pose_corre_loss",
-                                 action="store_true")
-        self.parser.add_argument("--use_feature_guide_loss",
-                                 action="store_true")
         self.parser.add_argument("--use_channel_mamba",
                                  action="store_true")
         self.parser.add_argument("--use_channel_mamba_2",
                                  action="store_true")
-        self.parser.add_argument("--use_AdaRM",
+        self.parser.add_argument("--use_HAM",
                                  action="store_true")
     def parse(self):
         self.options = self.parser.parse_args()
