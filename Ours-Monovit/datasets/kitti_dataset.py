@@ -1,0 +1,203 @@
+from __future__ import absolute_import, division, print_function
+
+import os
+import skimage.transform
+import numpy as np
+import PIL.Image as pil
+from PIL import Image
+
+from kitti_utils import generate_depth_map
+from .mono_dataset import MonoDataset
+from .seg_utils import labels
+
+def pil_loader_gray(path):
+    img = Image.open(path)
+    img = img.convert("L")
+    return img
+
+class KITTIDataset(MonoDataset):
+    """Superclass for different types of KITTI dataset loaders
+    """
+    def __init__(self, *args, **kwargs):
+        super(KITTIDataset, self).__init__(*args, **kwargs)
+
+        self.K = np.array([[0.58, 0, 0.5, 0],
+                           [0, 1.92, 0.5, 0],
+                           [0, 0, 1, 0],
+                           [0, 0, 0, 1]], dtype=np.float32)
+
+        self.full_res_shape = (1242, 375)
+        self.side_map = {"2": 2, "3": 3, "l": 2, "r": 3}
+
+    def check_depth(self):
+        line = self.filenames[0].split()
+        scene_name = line[0]
+        frame_index = int(line[1])
+
+        velo_filename = os.path.join(
+            self.data_path,
+            scene_name,
+            "velodyne_points/data/{:010d}.bin".format(int(frame_index)))
+
+        return os.path.isfile(velo_filename)
+
+    def get_color(self, folder, frame_index, side, do_flip):
+        color = self.loader(self.get_image_path(folder, frame_index, side))
+
+        if do_flip:
+            color = color.transpose(pil.FLIP_LEFT_RIGHT)
+
+        return color
+
+
+    def get_guide(self, data_path, folder, frame_index, side, img_ext='.png'):
+        side_map = {"2": 2, "3": 3, "l": 2, "r": 3}
+        f_str = "{:010d}{}".format(frame_index, img_ext)
+        image_path = os.path.join(folder, "image_0{}/data".format(side_map[side]))
+        guide = pil_loader_gray(os.path.join(data_path, "Save_picture", "guides", image_path, f_str))
+        return guide
+
+    def get_edge_region(self, data_path, folder, frame_index, side, img_ext='.png'):
+        side_map = {"2": 2, "3": 3, "l": 2, "r": 3}
+        f_str = "{:010d}{}".format(frame_index, img_ext)
+        image_path = os.path.join(folder, "image_0{}/data".format(side_map[side]))
+        edge_region = pil_loader_gray(os.path.join(data_path, "Save_picture", "edge_regions", image_path, f_str))
+        return edge_region
+
+    def get_edge_mask(self, data_path, folder, frame_index, side, img_ext='.png'):
+        side_map = {"2": 2, "3": 3, "l": 2, "r": 3}
+        f_str = "{:010d}{}".format(frame_index, img_ext)
+        image_path = os.path.join(folder, "image_0{}/data".format(side_map[side]))
+        edge_mask = pil_loader_gray(os.path.join(data_path, "Save_picture", "edge_masks", image_path, f_str))
+        return edge_mask
+
+    def get_indice(self, data_path, folder, frame_index, side, indice_num, img_ext='.npy'):
+        middle_indices = np.ones((indice_num,2))
+        side_map = {"2": 2, "3": 3, "l": 2, "r": 3}
+        f_str = "{:010d}{}".format(frame_index, img_ext)
+        indice_path = os.path.join(folder, "image_0{}/data".format(side_map[side]))
+        loaded_indices = np.load(os.path.join(data_path, "Save_picture", "indices", indice_path, f_str))
+        real_indice_num, _ = loaded_indices.shape
+        # 用了SAM分割之后real_indice_num大概等于6000
+        if real_indice_num <= indice_num:
+            middle_indices[:real_indice_num] = loaded_indices
+        else:
+            middle_indices = loaded_indices[:indice_num]
+        return middle_indices
+
+    def get_edge(self, data_path, folder, frame_index, side, img_ext='.png'):
+        side_map = {"2": 2, "3": 3, "l": 2, "r": 3}
+        f_str = "{:010d}{}".format(frame_index, img_ext)
+        image_path = os.path.join(folder, "image_0{}/data".format(side_map[side]))
+        edge = pil_loader_gray(os.path.join(data_path, "Save_picture", "edges", image_path, f_str))
+        return edge
+
+class KITTIRAWDataset(KITTIDataset):
+    """KITTI dataset which loads the original velodyne depth maps for ground truth
+    """
+    def __init__(self, *args, **kwargs):
+        super(KITTIRAWDataset, self).__init__(*args, **kwargs)
+
+    def get_image_path(self, folder, frame_index, side):
+        f_str = "{:010d}{}".format(frame_index, self.img_ext)
+        image_path = os.path.join(
+            self.data_path, folder, "image_0{}/data".format(self.side_map[side]), f_str)
+        return image_path
+
+    def get_depth(self, folder, frame_index, side, do_flip):
+        calib_path = os.path.join(self.data_path, folder.split("/")[0])
+
+        velo_filename = os.path.join(
+            self.data_path,
+            folder,
+            "velodyne_points/data/{:010d}.bin".format(int(frame_index)))
+
+        depth_gt = generate_depth_map(calib_path, velo_filename, self.side_map[side])
+        depth_gt = skimage.transform.resize(
+            depth_gt, self.full_res_shape[::-1], order=0, preserve_range=True, mode='constant')
+
+        if do_flip:
+            depth_gt = np.fliplr(depth_gt)
+
+        return depth_gt
+
+    def get_seg_map(self, folder, frame_index, side, do_flip):
+        path = self.get_image_path(folder, frame_index, side)
+        path = path.replace('Kitti', 'Kitti/segmentation')
+        path = path.replace('/data', '')
+
+        seg = self.loader(path, mode='P')
+        seg_copy = np.array(seg.copy())
+
+        for k in np.unique(seg):
+            seg_copy[seg_copy == k] = labels[k].trainId
+        seg = Image.fromarray(seg_copy, mode='P')
+
+        if do_flip:
+            seg = seg.transpose(pil.FLIP_LEFT_RIGHT)
+        return seg
+
+
+class KITTIOdomDataset(KITTIDataset):
+    """KITTI dataset for odometry training and testing
+    """
+    def __init__(self, *args, **kwargs):
+        super(KITTIOdomDataset, self).__init__(*args, **kwargs)
+
+    def get_image_path(self, folder, frame_index, side):
+        f_str = "{:06d}{}".format(frame_index, self.img_ext)
+        image_path = os.path.join(
+            self.data_path,
+            "sequences/{:02d}".format(int(folder)),
+            "image_{}".format(self.side_map[side]),
+            f_str)
+        return image_path
+
+
+class KITTIDepthDataset(KITTIDataset):
+    """KITTI dataset which uses the updated ground truth depth maps
+    """
+    def __init__(self, *args, **kwargs):
+        super(KITTIDepthDataset, self).__init__(*args, **kwargs)
+
+    def get_image_path(self, folder, frame_index, side):
+        f_str = "{:010d}{}".format(frame_index, self.img_ext)
+        image_path = os.path.join(
+            self.data_path,
+            folder,
+            "image_0{}/data".format(self.side_map[side]),
+            f_str)
+        return image_path
+
+    def get_depth(self, folder, frame_index, side, do_flip):
+        f_str = "{:010d}.png".format(frame_index)
+        depth_path = os.path.join(
+            self.data_path,
+            folder,
+            "proj_depth/groundtruth/image_0{}".format(self.side_map[side]),
+            f_str)
+
+        depth_gt = pil.open(depth_path)
+        depth_gt = depth_gt.resize(self.full_res_shape, pil.NEAREST)
+        depth_gt = np.array(depth_gt).astype(np.float32) / 256
+
+        if do_flip:
+            depth_gt = np.fliplr(depth_gt)
+
+        return depth_gt
+
+    def get_seg_map(self, folder, frame_index, side, do_flip):
+        path = self.get_image_path(folder, frame_index, side)
+        path = path.replace('Kitti', 'Kitti/segmentation')
+        path = path.replace('/data', '')
+
+        seg = self.loader(path, mode='P')
+        seg_copy = np.array(seg.copy())
+
+        for k in np.unique(seg):
+            seg_copy[seg_copy == k] = labels[k].trainId
+        seg = Image.fromarray(seg_copy, mode='P')
+
+        if do_flip:
+            seg = seg.transpose(pil.FLIP_LEFT_RIGHT)
+        return seg
