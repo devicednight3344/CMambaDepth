@@ -11,6 +11,10 @@
 |Ours|0.140|2.761|13.550|0.229|0.829|0.936|0.972|https://drive.google.com/file/d/1n92P-fp2IdznIzhvHiLsXCjHHhROAmuD/view?usp=drive_link|
 
 
+## Experimental Environment:
+The experiments were conducted on a single NVIDIA RTX 4090 GPU with Python 3.7.12. The required deep learning environment can be found in requirements.txt(https://github.com/devicednight3344/CMambaDepth/blob/dfa49acbf45b20131d12136296ff99ac1844cd10/requirements.txt).
+
+
 ## Training:
 ```
 python train.py --num_epochs 35 --scales 0 --png --log_dir models --data_path /media/a/b81bd773-44f1-4674-846e-436d8b829731/KITTI_raw_data --num_workers 8 --batch_size 11 --use_channel_mamba --use_channel_mamba_2 --use_HAM --model_name CMambaDepth
